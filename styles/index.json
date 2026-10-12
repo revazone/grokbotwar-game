@@ -1,0 +1,105 @@
+{
+  "_comment": "Pre-canned loadouts for the 4 onboarding styles (docs/SPEC.md 1.3 speed rule). Paths are relative to the repo root. Build a match config with: node tools/style-config.js <style> [--soft] [--out bots.styles.json]",
+  "version": 1,
+  "styles": {
+    "fortress": {
+      "name": "Fortress",
+      "description": "Hold a corner and let them come to you: banks energy for replacements, guard drones wall off the hero.",
+      "color": "#39ff14",
+      "hero": "styles/fortress/hero.js",
+      "drones": {
+        "guard": "styles/fortress/guard.js"
+      },
+      "battlePlan": "styles/fortress/plan.js",
+      "arsenal": {
+        "guard": 2
+      },
+      "opening": [
+        "Hero takes the corner, guards form a wall",
+        "Hold: let them come into range",
+        "Bank energy for a new hero"
+      ],
+      "softRivals": {
+        "energyRate": 0.85,
+        "planEveryTicks": 22
+      }
+    },
+    "hunter": {
+      "name": "Hunter",
+      "description": "Find the enemy and keep the pressure on: chases contacts and swarms them in waves.",
+      "color": "#ff4d4d",
+      "hero": "styles/hunter/hero.js",
+      "drones": {
+        "swarm": "styles/hunter/swarm.js",
+        "scout": "styles/hunter/scout.js"
+      },
+      "battlePlan": "styles/hunter/plan.js",
+      "arsenal": {
+        "swarm": 2,
+        "scout": 1
+      },
+      "opening": [
+        "Pack launches with the hero",
+        "Scout finds the weakest team",
+        "Waves of swarm keep the pressure"
+      ],
+      "softRivals": {
+        "energyRate": 0.8,
+        "planEveryTicks": 26
+      }
+    },
+    "sharpshooter": {
+      "name": "Sharpshooter",
+      "description": "Keep your distance and pick them off: long-range full-power shots, kites anything that closes in.",
+      "color": "#00e5ff",
+      "hero": "styles/sharpshooter/hero.js",
+      "drones": {
+        "picket": "styles/sharpshooter/picket.js"
+      },
+      "battlePlan": "styles/sharpshooter/plan.js",
+      "arsenal": {
+        "picket": 1
+      },
+      "opening": [
+        "Hero backs off to long range",
+        "Pickets spot and harass at ~300",
+        "Hero kites anything that closes in"
+      ],
+      "softRivals": {
+        "energyRate": 0.85,
+        "planEveryTicks": 30
+      }
+    },
+    "wildcard": {
+      "name": "Wildcard",
+      "description": "Unpredictable and hard to read: random moves and timing, but it still aims true.",
+      "color": "#ffb000",
+      "hero": "styles/wildcard/hero.js",
+      "drones": {
+        "chaos": "styles/wildcard/chaos.js",
+        "swarm": "styles/wildcard/swarm.js"
+      },
+      "battlePlan": "styles/wildcard/plan.js",
+      "arsenal": {
+        "chaos": 3
+      },
+      "opening": [
+        "Everything launches at once",
+        "Dice pick the moves and the timing",
+        "Chaos drones dive whoever shows up"
+      ],
+      "softRivals": {
+        "energyRate": 0.79,
+        "planEveryTicks": 26
+      }
+    }
+  },
+  "order": [
+    "fortress",
+    "hunter",
+    "sharpshooter",
+    "wildcard"
+  ],
+  "_comment_softRivals": "softRivals = handicap {energyRate, planEveryTicks} the 3 NPC rivals get in this style's soft first fight (tools/style-config.js --soft); tuned with tools/style-balance.js --soft. Default (if missing): src/config.js commander.softHandicap.",
+  "_comment_arsenal": "arsenal = default pre-match drones for the style (SPEC 5.1, budget commander.arsenalBudget = 120, 20 per drone; the rest is starting energy). opening = 3 short lines for the loadout card (tools/loadout-card.js); the opening map art is assets/loadout/maps/<style>.svg."
+}

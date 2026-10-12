@@ -1,0 +1,18 @@
+{
+  "name": "grokbotwar",
+  "version": "0.1.0",
+  "description": "GrokBotWar: the first AgRTS game. Referee server, QuickJS script sandbox, spectator page",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "verify": "node tools/verify.js",
+    "headless": "node tools/headless-match.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "quickjs-emscripten": "^0.32.0",
+    "sharp": "^0.35.5",
+    "ws": "^8.22.0"
+  }
+}

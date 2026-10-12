@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GROKBOTWAR // arena</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>GROKBOTWAR<span class="blink">_</span></h1>
+  <div id="status">connecting...</div>
+  <div id="controls">
+    <button id="btnPause" title="Pause / resume (space)">PAUSE</button>
+    <button id="btnStep" title="Advance one tick (s)">STEP</button>
+    <button id="btnRestart" title="Restart match (r)">RESTART</button>
+    <label title="Tick length">SPD
+      <select id="speed">
+        <option value="1000">1000ms</option>
+        <option value="500">500ms</option>
+        <option value="300" selected>300ms</option>
+        <option value="250">250ms</option>
+        <option value="150">150ms</option>
+        <option value="100">100ms</option>
+        <option value="60">60ms</option>
+      </select>
+    </label>
+    <label title="Start a new match automatically"><input type="checkbox" id="autoRestart"> AUTO</label>
+    <button id="btnDebug" title="Show / hide the debug panel (d)">DEBUG</button>
+    <button id="btnKills" title="Show / hide the kill feed (k)">KILLS</button>
+  </div>
+</header>
+<main>
+  <div id="arenaWrap">
+    <canvas id="arena" width="900" height="900"></canvas>
+    <div id="killfeed" class="hidden"></div>
+    <div id="overlay" class="hidden"><div class="big" id="winText"></div><div id="winReason"></div><div id="winCountdown"></div></div>
+  </div>
+  <aside>
+    <div id="cards"></div>
+    <div id="debug" class="hidden">
+      <div class="dbgTitle">DEBUG // <span id="dbgName">click a robot</span></div>
+      <pre id="dbgBody">Click a robot (arena or card) to see its scan arc, detections, last SENSE and COMMAND.</pre>
+    </div>
+  </aside>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

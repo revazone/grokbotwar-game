@@ -1,0 +1,13 @@
+<!-- WILDCARD opening map (made once). Arena coords 1500x830, our corner top-left. {{FIELD}} is filled per match. -->
+  <g stroke="#0d3d06" stroke-width="3" fill="none"><circle cx="750" cy="415" r="150"/><circle cx="750" cy="415" r="300"/><path d="M750 0 V830 M0 415 H1500" stroke-dasharray="12 18"/></g>
+  <g fill="#3a1010" stroke="#ff6b5e" stroke-width="3" opacity="0.55"><rect x="1385" y="25" width="90" height="90"/><rect x="1385" y="715" width="90" height="90"/><rect x="25" y="715" width="90" height="90"/></g>
+  <rect x="25" y="25" width="90" height="90" fill="#0b2a05" stroke="#39ff14" stroke-width="4"/>
+  <polygon points="200,130 165,200 235,200" fill="#39ff14"/>
+  <g stroke="#39ff14" stroke-width="6" stroke-linecap="round"><path d="M330 220 v44 M308 242 h44 M314 226 l32 32 M346 226 l-32 32"/><path d="M250 320 v44 M228 342 h44 M234 326 l32 32 M266 326 l-32 32"/></g>
+  <g stroke="#39ff14" stroke-width="6" stroke-linecap="round"><path d="M390 300 v44 M368 322 h44 M374 306 l32 32 M406 306 l-32 32"/></g>
+  <path d="M240 200 L420 420 L560 260 L700 520 L860 330" fill="none" stroke="#ffe08a" stroke-width="7" stroke-dasharray="26 16" marker-end="url(#arrow)"/>
+  <path d="M370 250 Q700 40 1000 200" fill="none" stroke="#ffe08a" stroke-width="7" stroke-dasharray="26 16" marker-end="url(#arrow)"/>
+  <path d="M390 340 Q560 760 1100 640" fill="none" stroke="#ffe08a" stroke-width="7" stroke-dasharray="26 16" marker-end="url(#arrow)"/>
+  <text x="1050" y="300" fill="#ffe08a" font-size="90" font-family="DejaVu Sans Mono, monospace" font-weight="bold">?</text>
+  <text x="900" y="520" fill="#ffe08a" font-size="44" font-family="DejaVu Sans Mono, monospace">roll the dice</text>
+  <text x="470" y="90" fill="#39ff14" font-size="40" font-family="DejaVu Sans Mono, monospace">{{FIELD}}</text>

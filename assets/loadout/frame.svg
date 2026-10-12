@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="420" viewBox="0 0 800 420">
+  <!-- GrokBotWar loadout card frame (made once; tools/loadout-card.js fills the {{...}} slots each match).
+       Green terminal look of the phone page. Fonts: DejaVu Sans Mono (any monospace works). -->
+  <defs>
+    <filter id="glow" x="-20%" y="-50%" width="140%" height="200%">
+      <feGaussianBlur stdDeviation="2.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="#ffe08a"/></marker>
+    <marker id="arrowRed" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="#ff6b5e"/></marker>
+    <pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="1" fill="#39ff14" opacity="0.035"/></pattern>
+  </defs>
+  <rect x="0" y="0" width="800" height="420" fill="#010801"/>
+  <rect x="0" y="0" width="800" height="420" fill="url(#scan)"/>
+  <rect x="1" y="1" width="798" height="418" fill="none" stroke="#1a7a0a" stroke-width="2"/>
+  <rect x="6" y="6" width="788" height="408" fill="none" stroke="#0d3d06" stroke-width="1"/>
+  <g font-family="DejaVu Sans Mono, Courier New, monospace">
+    <rect x="24" y="22" width="12" height="24" fill="{{STYLE_COLOR}}"/>
+    <text x="44" y="43" font-size="{{TITLE_SIZE}}" font-weight="bold" letter-spacing="2" fill="#39ff14" filter="url(#glow)">{{TITLE}}</text>
+    <text x="24" y="66" font-size="12.5" fill="#39ff14" opacity="0.8">{{SUBTITLE}}</text>
+    <g font-size="15.5" fill="#39ff14">{{ITEMS}}</g>
+    <g font-size="12" fill="#39ff14" opacity="0.75">{{FOOTNOTES}}</g>
+    <!-- right: opening map (arena 1500x830, our corner drawn top-left) -->
+    <rect x="356" y="22" width="420" height="232" fill="#000" stroke="#1a7a0a" stroke-width="1.5"/>
+    <svg x="356" y="22" width="420" height="232" viewBox="0 0 1500 830">{{MAP}}</svg>
+    <text x="566" y="248" font-size="10" fill="#39ff14" opacity="0.5" text-anchor="middle">our corner shown top-left</text>
+    <text x="356" y="284" font-size="13" font-weight="bold" letter-spacing="1.5" fill="#ffe08a">OPENING</text>
+    <g font-size="13" fill="#ffe08a">{{OPENING}}</g>
+    <text x="24" y="400" font-size="11" fill="#39ff14" opacity="0.55">{{FOOTER}}</text>
+  </g>
+</svg>

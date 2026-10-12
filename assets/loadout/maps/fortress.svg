@@ -1,0 +1,15 @@
+<!-- FORTRESS opening map (made once). Arena coords 1500x830, our corner top-left. {{FIELD}} is filled per match. -->
+  <g stroke="#0d3d06" stroke-width="3" fill="none"><circle cx="750" cy="415" r="150"/><circle cx="750" cy="415" r="300"/><path d="M750 0 V830 M0 415 H1500" stroke-dasharray="12 18"/></g>
+  <g fill="#3a1010" stroke="#ff6b5e" stroke-width="3" opacity="0.55"><rect x="1385" y="25" width="90" height="90"/><rect x="1385" y="715" width="90" height="90"/><rect x="25" y="715" width="90" height="90"/></g>
+  <rect x="25" y="25" width="90" height="90" fill="#0b2a05" stroke="#39ff14" stroke-width="4"/>
+  <g fill="none" stroke="#ff6b5e" stroke-width="7" stroke-dasharray="26 18" opacity="0.8">
+    <path d="M1330 120 L560 190" marker-end="url(#arrowRed)"/><path d="M1300 700 L560 360" marker-end="url(#arrowRed)"/><path d="M520 720 L330 470" marker-end="url(#arrowRed)"/>
+  </g>
+  <polygon points="200,130 165,200 235,200" fill="#39ff14"/>
+  <g fill="none" stroke="#39ff14" stroke-width="7">
+    <rect x="345" y="110" width="40" height="40" transform="rotate(45 365 130)"/><rect x="330" y="250" width="40" height="40" transform="rotate(45 350 270)"/>
+    <rect x="180" y="330" width="40" height="40" transform="rotate(45 200 350)"/>  </g>
+  <path d="M440 60 Q450 380 60 420" fill="none" stroke="#39ff14" stroke-width="4" stroke-dasharray="10 12" opacity="0.6"/>
+  <text x="60" y="520" fill="#39ff14" font-size="56" font-family="DejaVu Sans Mono, monospace" font-weight="bold">HOLD</text>
+  <text x="640" y="600" fill="#ff6b5e" font-size="40" font-family="DejaVu Sans Mono, monospace">they come to us</text>
+  <text x="470" y="90" fill="#39ff14" font-size="40" font-family="DejaVu Sans Mono, monospace">{{FIELD}}</text>

@@ -1,0 +1,22 @@
+{
+  "_comment": "2-player AgRTS (Iteration 11). First seat is the left side (Green). Claim it with node tools/warrior-seat.js join. Ember is the rival and is not open. Team decisions are simulated until swapped (docs/TEAM-DECISIONS.md). Classic 4-team arena: bots.json / GAME=classic.",
+  "mode": "agrts",
+  "pauseAfterMatch": true,
+  "seats": {
+    "Green": {
+      "player": true,
+      "open": true,
+      "control": true,
+      "color": "#bafc82",
+      "label": "GREEN COMMAND",
+      "base": "HAVEN-01",
+      "role": "AUTO-DRAFTED · AGENT COMMAND"
+    },
+    "Ember": {
+      "color": "#ff7768",
+      "label": "EMBER COMMAND",
+      "base": "CINDER-09",
+      "role": "RIVAL AGENT · COUNTER-BUILD"
+    }
+  }
+}

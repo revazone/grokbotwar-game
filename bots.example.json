@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy to bots.json (or BOTS_CONFIG=path). Exactly 4 seats; each runs a script from scripts/. joinToken optional (random if omitted; all written to logs/join-codes.json). Scripts are re-read at every match start; submissions via POST /api/seat/script override until the file changes again.",
+  "tickMs": 300,
+  "maxTicks": 600,
+  "autoRestart": true,
+  "seats": {
+    "Turtle": { "script": "scripts/turtle.js", "color": "#39ff14" },
+    "Hunter": { "script": "scripts/hunter.js", "color": "#ff4d4d" },
+    "Sniper": { "script": "scripts/sniper.js", "color": "#00e5ff" },
+    "Strafer": { "script": "scripts/example-strafer.js", "color": "#ffb000" }
+  }
+}

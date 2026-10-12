@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+tools/node_modules/
+
+# Runtime output / private state
+logs/
+secrets/
+state/
+matches/
+replays/
+*.pid
+*.log
+
+# Avatars: uploaded/generated images and identities (keep the small samples)
+avatars/*
+!avatars/samples/
+
+# API-submitted scripts (runtime copies)
+scripts/submitted/
+
+# Screenshots: keep only the two README images
+screenshots/*
+!screenshots/grokbotwar-arena.png
+!screenshots/mid-match-selected.png
+!screenshots/relay-mobile.png
+!screenshots/relay-landscape.png
+!screenshots/relay-portrait-rotate.png
+!screenshots/agrts-desktop.png
+!screenshots/agrts-phone.png
+!screenshots/agrts-portrait.png
+!screenshots/relay-agrts-landscape.png
+!screenshots/relay-agrts-portrait.png
+
+# Legacy webhook transport (its config holds a real webhook URL)
+legacy/
+
+# Env and key material
+.env
+.env.*
+*.key
+*.pem
+
+# Generated style match configs (tools/style-config.js)
+bots.styles.json
+cards/

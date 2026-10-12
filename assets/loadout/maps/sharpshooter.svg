@@ -1,0 +1,14 @@
+<!-- SHARPSHOOTER opening map (made once). Arena coords 1500x830, our corner top-left. {{FIELD}} is filled per match. -->
+  <g stroke="#0d3d06" stroke-width="3" fill="none"><circle cx="750" cy="415" r="150"/><circle cx="750" cy="415" r="300"/><path d="M750 0 V830 M0 415 H1500" stroke-dasharray="12 18"/></g>
+  <g fill="#3a1010" stroke="#ff6b5e" stroke-width="3" opacity="0.55"><rect x="1385" y="25" width="90" height="90"/><rect x="1385" y="715" width="90" height="90"/><rect x="25" y="715" width="90" height="90"/></g>
+  <rect x="25" y="25" width="90" height="90" fill="#0b2a05" stroke="#39ff14" stroke-width="4"/>
+  <circle cx="230" cy="190" r="520" fill="none" stroke="#ffe08a" stroke-width="4" stroke-dasharray="14 14" opacity="0.7"/>
+  <circle cx="230" cy="190" r="380" fill="none" stroke="#ffe08a" stroke-width="3" stroke-dasharray="6 16" opacity="0.5"/>
+  <polygon points="230,150 195,220 265,220" fill="#39ff14"/>
+  <g stroke="#39ff14" stroke-width="7"><path d="M520 180 v40 M500 200 h40 M420 400 v40 M400 420 h40"/></g>
+  <path d="M260 220 L800 360" fill="none" stroke="#ffe08a" stroke-width="5" opacity="0.9" marker-end="url(#arrow)"/>
+  <path d="M1250 560 L920 420" fill="none" stroke="#ff6b5e" stroke-width="7" stroke-dasharray="26 18" marker-end="url(#arrowRed)"/>
+  <path d="M180 260 Q120 420 260 520" fill="none" stroke="#39ff14" stroke-width="5" stroke-dasharray="14 12" marker-end="url(#arrow)"/>
+  <text x="780" y="230" fill="#ffe08a" font-size="44" font-family="DejaVu Sans Mono, monospace" font-weight="bold">400-600</text>
+  <text x="280" y="610" fill="#39ff14" font-size="40" font-family="DejaVu Sans Mono, monospace">kite</text>
+  <text x="470" y="90" fill="#39ff14" font-size="40" font-family="DejaVu Sans Mono, monospace">{{FIELD}}</text>

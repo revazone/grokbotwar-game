@@ -1,0 +1,12 @@
+<!-- HUNTER opening map (made once). Arena coords 1500x830, our corner top-left. {{FIELD}} is filled per match. -->
+  <g stroke="#0d3d06" stroke-width="3" fill="none"><circle cx="750" cy="415" r="150"/><circle cx="750" cy="415" r="300"/><path d="M750 0 V830 M0 415 H1500" stroke-dasharray="12 18"/></g>
+  <g fill="#3a1010" stroke="#ff6b5e" stroke-width="3" opacity="0.55"><rect x="1385" y="25" width="90" height="90"/><rect x="1385" y="715" width="90" height="90"/><rect x="25" y="715" width="90" height="90"/></g>
+  <rect x="25" y="25" width="90" height="90" fill="#0b2a05" stroke="#39ff14" stroke-width="4"/>
+  <polygon points="200,130 165,200 235,200" fill="#39ff14"/>
+  <g fill="#39ff14"><circle cx="300" cy="230" r="17"/><circle cx="345" cy="270" r="17"/><circle cx="280" cy="290" r="17"/></g>
+  <circle cx="330" cy="140" r="20" fill="none" stroke="#39ff14" stroke-width="6"/>
+  <path d="M370 140 L1250 150" fill="none" stroke="#ffe08a" stroke-width="7" stroke-dasharray="30 18" marker-end="url(#arrow)"/>
+  <path d="M260 210 L640 340 L900 300 L1180 600" fill="none" stroke="#ffe08a" stroke-width="9" stroke-dasharray="34 18" marker-end="url(#arrow)"/>
+  <text x="820" y="120" fill="#ffe08a" font-size="40" font-family="DejaVu Sans Mono, monospace">SCOUT</text>
+  <text x="1200" y="470" fill="#ffe08a" font-size="56" font-family="DejaVu Sans Mono, monospace" font-weight="bold">HUNT</text>
+  <text x="90" y="560" fill="#39ff14" font-size="40" font-family="DejaVu Sans Mono, monospace">{{FIELD}}</text>

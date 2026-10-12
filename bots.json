@@ -1,0 +1,50 @@
+{
+  "_comment": "Live arena: COMMANDER mode. Turtle runs the GrokBotWar Turtle bot's own v2 scripts (turtle-hero.js, turtle-drone-guard.js as drone type 'guard', turtle-battle-plan.js (battle plan; was turtle-commander.js); identical to its API submission of 2026-10-02 21:01). API submissions also persist across restarts (state/rosters.json). Turtle shows its identity badge (name 'GrokBotWar Turtle', empty shape/color -> fallback squircle in team color). Hunter uses a local sample image; Sniper's avatar was uploaded via the API; Chaos has none (arrow). Classic one-unit config: bots.classic.json. Seats marked \"open\": true (the 3 house seats) can be claimed by a new player on this computer with POST /api/seat/join (docs/ROBOT-API.md 9a); Turtle is never offered.",
+  "mode": "commander",
+  "tickMs": 300,
+  "autoRestart": true,
+  "seats": {
+    "Turtle": {
+      "hero": "scripts/turtle-hero.js",
+      "drones": {
+        "guard": "scripts/turtle-drone-guard.js"
+      },
+      "battlePlan": "scripts/turtle-battle-plan.js",
+      "color": "#39ff14",
+      "identity": {
+        "name": "GrokBotWar Turtle",
+        "avatarShape": "",
+        "avatarColor": ""
+      }
+    },
+    "Hunter": {
+      "hero": "scripts/hunter.js",
+      "drones": {
+        "swarm": "scripts/drones/swarm.js",
+        "scout": "scripts/drones/scout.js"
+      },
+      "battlePlan": "scripts/battle-plans/waves.js",
+      "color": "#ff4d4d",
+      "avatar": "avatars/samples/hunter.jpg",
+      "open": true
+    },
+    "Sniper": {
+      "hero": "scripts/sniper.js",
+      "drones": {
+        "guard": "scripts/drones/guard.js"
+      },
+      "battlePlan": "scripts/battle-plans/defensive.js",
+      "color": "#00e5ff",
+      "open": true
+    },
+    "Chaos": {
+      "hero": "scripts/chaos.js",
+      "drones": {
+        "chaos": "scripts/drones/chaos-drone.js"
+      },
+      "battlePlan": "scripts/battle-plans/chaos.js",
+      "color": "#ffb000",
+      "open": true
+    }
+  }
+}

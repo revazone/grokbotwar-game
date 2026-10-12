@@ -1,0 +1,143 @@
+:root { --g: #39ff14; --gd: #1a7a0a; --bg: #010801; --panel: #031203; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--g); font-family: "Courier New", ui-monospace, monospace; height: 100%; }
+body::after { /* scanlines */
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 10;
+  background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,.22) 3px);
+}
+header { display: flex; align-items: center; gap: 18px; padding: 8px 14px; border-bottom: 1px solid var(--gd); flex-wrap: wrap; }
+h1 { margin: 0; font-size: 22px; letter-spacing: 4px; text-shadow: 0 0 6px var(--g); }
+.blink { animation: blink 1s steps(1) infinite; } @keyframes blink { 50% { opacity: 0; } }
+#status { flex: 1; font-size: 14px; text-shadow: 0 0 4px var(--g); min-width: 260px; }
+#controls { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+button, select { background: #000; color: var(--g); border: 1px solid var(--g); font-family: inherit; font-size: 13px; padding: 4px 10px; cursor: pointer; text-shadow: 0 0 4px var(--g); box-shadow: 0 0 4px rgba(57,255,20,.35) inset; }
+button:hover { background: #062806; }
+input[type=checkbox] { accent-color: var(--g); }
+main { display: flex; gap: 12px; padding: 12px; align-items: flex-start; }
+#arenaWrap { position: relative; flex: 0 0 auto; }
+canvas#arena { display: block; border: 1px solid var(--gd); box-shadow: 0 0 18px rgba(57,255,20,.25); background: #000; cursor: crosshair; width: min(calc(100vh - 90px), calc(100vw - 420px)); height: auto; aspect-ratio: 1 / 1; min-width: 420px; }
+#overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0,10,0,.55); text-shadow: 0 0 10px currentColor; pointer-events: none; }
+#overlay.hidden { display: none; }
+#overlay .big { font-size: 46px; letter-spacing: 6px; }
+#overlay div { margin: 6px; font-size: 18px; }
+aside { flex: 1; min-width: 340px; max-width: 520px; display: flex; flex-direction: column; gap: 10px; }
+.card { border: 1px solid var(--gd); background: var(--panel); padding: 8px 10px; cursor: pointer; }
+.card.sel { border-color: var(--g); box-shadow: 0 0 10px rgba(57,255,20,.4); }
+.card.dead { opacity: .45; }
+.card .top { display: flex; justify-content: space-between; font-size: 15px; font-weight: bold; }
+.card .nm { text-shadow: 0 0 6px currentColor; }
+.bar { height: 8px; border: 1px solid var(--gd); margin: 4px 0; position: relative; }
+.bar > i { display: block; height: 100%; }
+.lbl { font-size: 11px; display: flex; justify-content: space-between; opacity: .85; }
+.thought { font-size: 12px; margin-top: 4px; min-height: 2.4em; color: #b9ffa8; }
+.stats { font-size: 11px; opacity: .7; }
+#debug { border: 1px solid var(--gd); background: var(--panel); padding: 8px; }
+.dbgTitle { font-size: 13px; margin-bottom: 4px; }
+#dbgBody { margin: 0; font-size: 11px; max-height: 330px; overflow: auto; white-space: pre-wrap; color: #9fe88f; }
+.drv { font-size: 11px; opacity: .75; font-weight: normal; }
+.mem { font-size: 11px; color: #7fd6ff; margin-top: 2px; }
+.flt { font-size: 11px; opacity: .8; margin-top: 2px; }
+.card .av { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--g); vertical-align: middle; margin-right: 8px; filter: sepia(0.25) hue-rotate(50deg) saturate(1.1) brightness(0.95); box-shadow: 0 0 8px rgba(57,255,20,.4); object-fit: cover; }
+.card.dead .av { filter: grayscale(1) brightness(0.5); }
+
+/* commander mode (team cards; .plan = the team's battle plan line) */
+#killfeed { position: absolute; bottom: 10px; right: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; pointer-events: none; font-size: 13px; font-weight: bold; }
+#killfeed div { background: rgba(0,0,0,.72); border: 1px solid rgba(57,255,20,.35); padding: 2px 8px; transition: opacity .6s; white-space: nowrap; }
+#killfeed .x { color: #fff; margin: 0 6px; }
+#killfeed .ord { font-weight: normal; opacity: .9; }
+.card .av.badge { border-radius: 0; border: none; filter: none; box-shadow: none; object-fit: contain; }
+.card .disp { font-size: 11px; opacity: .75; font-weight: normal; margin-left: 4px; }
+.units { font-size: 11px; display: flex; gap: 10px; margin: 2px 0 1px; opacity: .9; }
+.chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.chip { font-size: 10px; border: 1px solid var(--gd); padding: 0 4px; position: relative; min-width: 34px; text-align: center; overflow: hidden; }
+.chip > b { position: absolute; left: 0; bottom: 0; height: 2px; }
+.chip.pend { opacity: .5; border-style: dashed; }
+.plan { font-size: 12px; color: #ffe08a; margin-top: 2px; min-height: 1.2em; }
+.bar.en > i { background: linear-gradient(90deg, #ffb000, #ffe08a); }
+#debug.hidden, #debug[hidden] { display: none !important; }
+button.on { background: var(--g); color: #000; text-shadow: none; }
+#killfeed.hidden, #killfeed[hidden] { display: none !important; }
+
+/* ---- compact layout (fits ~1265x700 without horizontal scroll) ---- */
+html, body { overflow-x: hidden; }
+header { gap: 10px; padding: 4px 10px; flex-wrap: wrap; row-gap: 4px; }
+h1 { font-size: 17px; letter-spacing: 3px; }
+#status { font-size: 12px; min-width: 200px; flex: 1 1 260px; line-height: 1.25; }
+#controls { gap: 5px; font-size: 11px; flex-wrap: wrap; }
+#controls button, #controls select { font-size: 11px; padding: 2px 6px; }
+#controls label { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+main { gap: 10px; padding: 8px 10px; }
+canvas#arena { width: min(calc(100vh - 62px), calc(100vw - 360px)); min-width: 300px; }
+aside { min-width: 300px; max-width: 520px; flex: 1 1 320px; gap: 6px; max-height: calc(100vh - 56px); overflow-y: auto; }
+.card { padding: 5px 8px; }
+.card .top { font-size: 13px; }
+.card .av { width: 26px; height: 26px; margin-right: 6px; }
+.thought { min-height: 0; font-size: 11px; margin-top: 2px; }
+.plan { font-size: 11px; min-height: 0; }
+.bar { height: 6px; margin: 2px 0; }
+.units { margin: 1px 0; }
+
+/* ---- slim HUD (team cards column ~280px) so the arena gets the room ---- */
+main { align-items: flex-start; }
+/* the arena is usually height-bound: letterbox it (free space split left/between) and keep the HUD flush right */
+#arenaWrap { margin-left: auto; }
+aside { margin-left: auto; }
+aside { flex: 0 0 280px; width: 280px; min-width: 0; max-width: 280px; gap: 5px; max-height: calc(100dvh - 56px); }
+.card { padding: 4px 6px; }
+.card .top { font-size: 12px; align-items: center; gap: 6px; min-width: 0; }
+.card .top > span:first-child { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.card .nm { flex: 0 0 auto; }
+.card .disp { overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 10px; }
+.card .st { flex: 0 0 auto; font-size: 11px; font-weight: normal; opacity: .9; }
+.card .av { width: 20px; height: 20px; margin-right: 5px; flex: 0 0 auto; }
+.card .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; margin-right: 5px; box-shadow: 0 0 6px currentColor; background: currentColor; }
+.lbl { font-size: 10px; gap: 6px; }
+.lbl > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar { height: 5px; margin: 1px 0 2px; }
+.units { font-size: 10px; gap: 8px; white-space: nowrap; overflow: hidden; }
+.thought, .plan { font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.chips { gap: 2px; margin-top: 2px; }
+.chip { font-size: 9px; min-width: 28px; padding: 0 3px; }
+.flt { font-size: 10px; margin-top: 1px; }
+.flt:empty { display: none; }
+#debug { padding: 6px; }
+#dbgBody { font-size: 10px; max-height: 300px; }
+
+/* ---- small landscape screens (phones/tablets sideways) ---- */
+@media (orientation: landscape) and (max-height: 560px) {
+  html, body { overflow: hidden; height: 100dvh; }
+  body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  header { padding: 2px 8px; gap: 8px; row-gap: 2px; }
+  h1 { font-size: 13px; letter-spacing: 2px; }
+  #status { font-size: 10px; min-width: 0; flex: 1 1 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #controls { gap: 3px; }
+  #controls button, #controls select { font-size: 10px; padding: 1px 4px; }
+  main { padding: 4px 6px; gap: 6px; }
+  canvas#arena { min-width: 0; width: min(calc(100dvh - 40px - env(safe-area-inset-top) - env(safe-area-inset-bottom)), calc(100vw - 24vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right))); }
+  aside { flex: 0 0 24vw; width: 24vw; max-width: 24vw; max-height: calc(100dvh - 34px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .units, .chips { display: none; }
+}
+/* ---- phones held upright: stack arena over the cards ---- */
+@media (orientation: portrait) and (max-width: 700px) {
+  main { flex-direction: column; align-items: stretch; }
+  #arenaWrap, aside { margin-left: 0; }
+  canvas#arena { width: calc(100vw - 20px); min-width: 0; }
+  aside { flex: 1 1 auto; width: auto; max-width: none; max-height: none; }
+  #status { min-width: 0; }
+}
+
+/* ---- widescreen battlefield: the canvas takes all the room left of the HUD at the arena's aspect ----
+   --ar = arena width / height (app.js sets it from the state, default 1500x830); --avh = height available to the
+   arena; the HUD width is whatever is left over, clamped, so on typical screens there are no bars at all. */
+:root { --ar: 1.8072; --avh: calc(100dvh - 45px); --hud: clamp(250px, calc(100vw - 32px - var(--avh) * var(--ar)), 320px); }
+canvas#arena { aspect-ratio: var(--ar); height: auto; min-width: 0; width: min(calc(100vw - 32px - var(--hud)), calc(var(--avh) * var(--ar))); }
+aside { flex: 0 0 var(--hud); width: var(--hud); max-width: var(--hud); }
+@media (orientation: landscape) and (max-height: 560px) {
+  :root { --avh: calc(100dvh - 38px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    --hud: clamp(130px, calc(100vw - 20px - env(safe-area-inset-left) - env(safe-area-inset-right) - var(--avh) * var(--ar)), 30vw); }
+  canvas#arena { width: min(calc(100vw - 20px - env(safe-area-inset-left) - env(safe-area-inset-right) - var(--hud)), calc(var(--avh) * var(--ar))); }
+}
+@media (orientation: portrait) and (max-width: 700px) {
+  canvas#arena { width: calc(100vw - 20px); }
+  aside { flex: 1 1 auto; width: auto; max-width: none; }
+}

@@ -1,0 +1,7 @@
+<!-- Opening map for a custom style (made once). Arena coords 1500x830, our corner top-left. -->
+  <g stroke="#0d3d06" stroke-width="3" fill="none"><circle cx="750" cy="415" r="150"/><circle cx="750" cy="415" r="300"/><path d="M750 0 V830 M0 415 H1500" stroke-dasharray="12 18"/></g>
+  <g fill="#3a1010" stroke="#ff6b5e" stroke-width="3" opacity="0.55"><rect x="1385" y="25" width="90" height="90"/><rect x="1385" y="715" width="90" height="90"/><rect x="25" y="715" width="90" height="90"/></g>
+  <rect x="25" y="25" width="90" height="90" fill="#0b2a05" stroke="#39ff14" stroke-width="4"/>
+  <polygon points="200,130 165,200 235,200" fill="#39ff14"/>
+  <path d="M260 200 L700 400" fill="none" stroke="#ffe08a" stroke-width="7" stroke-dasharray="26 16" marker-end="url(#arrow)"/>
+  <text x="470" y="90" fill="#39ff14" font-size="40" font-family="DejaVu Sans Mono, monospace">{{FIELD}}</text>
