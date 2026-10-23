@@ -1,6 +1,7 @@
-id,code,name,draft_cost,live_cost,hp,damage,range,speed,cooldown_s,radius,color,glyph,description,heal,heal_range,role,shape,splash_radius,splash_falloff,base_mult,friendly_fire,death_blast_mult,flying,max_alive,max_per_buy,buy_cooldown_s,bonus_vs,blast_resist,plane
-scout,S,Scout,12,28,25,5,38,37,0.9,9,#bafc82,›,"Fast, cheap, quick to field.",0,0,fast,arrow,,,,,,,,,,,,
-rifle,R,Rifle,20,40,40,8,100,23,1.25,11,#8ee5c1,✦,Reliable ranged support.,0,0,ranged,diamond,,,,,,,,,,D:1.5,,
-tank,T,Breaker,34,52,92,18,40,14,1.9,14,#efbd68,⬟,"Slow armor, heavy base damage.",0,0,armor,hex,,,,,,,,,,,0.5,
-medic,M,Medic,24,36,34,3,58,24,1.4,10,#a9c7ff,+,Light support with staying power.,6,42,healer,disc,,,,,,,,,,,,
-drone,D,Drone,10,20,7,36,30,85,0,8,#e59cff,✕,"Fast suicide unit, splash on impact.",0,0,kamikaze,cross,30,0.7,0.4,yes,0.5,yes,4,2,3,,,air
+id,code,name,draft_cost,live_cost,hp,damage,range,speed,cooldown_s,radius,color,glyph,description,heal,heal_range,role,shape,splash_radius,splash_falloff,base_mult,friendly_fire,death_blast_mult,flying,max_alive,max_per_buy,buy_cooldown_s,bonus_vs,blast_resist,plane,min_range,indirect,support,spawn_count
+scout,S,Scout,12,28,25,5,38,37,0.9,9,#bafc82,›,"Fields x3. Flanker: dives past the front at mortars and medics (x2.5 dmg), shrugs off half of splash. Runner: takes zones 2x faster, builds OB/FOB twice as fast.",0,0,fast,arrow,,,,,,,,,,O:2.5;M:2.5,0.5,,,,1,3
+rifle,R,Rifle,20,40,40,8,100,23,1.25,11,#8ee5c1,✦,Reliable ranged support.,0,0,ranged,diamond,,,,,,,,,,D:1.5,,,,,1,
+tank,T,Breaker,34,70,92,18,40,14,1.9,14,#efbd68,⬟,"Slow armor, heavy base damage.",0,0,armor,hex,,,,,,,2,,,,0.5,,,,2,
+medic,M,Medic,24,36,34,3,58,24,1.4,10,#a9c7ff,+,Light support with staying power.,6,42,healer,disc,,,,,,,,,,,,,,,1,
+drone,D,Drone,10,20,7,36,30,85,0,8,#e59cff,✕,"Fast suicide unit, splash on impact.",0,0,kamikaze,cross,30,0.7,0.4,yes,0.5,yes,4,2,3,,,air,,,1,
+mortar,O,Mortar,26,44,28,14,188,11,2.6,12,#e6c36a,⌒,"Slow tube. Shells past rifle range, over walls.",0,0,mortar,tube,32,0.55,0.5,no,0,no,,,,,,ground,112,yes,1,

@@ -10,8 +10,10 @@
 //   spendCredits(ctx)         -> { types, creditsLeft, bought }  territory-credit purchases
 //
 // SimulatedTeam (the functions below) is the Iteration 11 agent: balanced / pressure /
-// armor drafts, a six-buy queue, waves of up to 3, hold the last unit unless the base
+// armor drafts, a six-slot buy queue, waves of up to 3, hold the last unit unless the base
 // is threatened, hold medics until an ally has lost 20 HP, spend the queue when credits allow.
+// The simulated Ember no longer plays through this brain (it plays the commander's orders,
+// src/agrts/commander.js); this wave brain stays for EMBER_COMMANDER=0 and as the seam's default.
 //
 // Swap without rewriting the sim:
 //   match.useDecisions(createDecisionSource({ considerDeploy(ctx) { ... } }))
@@ -20,7 +22,8 @@
 // Those come from the seat (POST /api/seat/opening and POST /api/seat/decision).
 // An empty warrior queue may fall back to considerDeploy after one open-field cadence.
 
-const { TYPES, TYPE_IDS, FIELD_COST, DRAFT_BUDGET, ROSTER_LIMIT, MAX_BUYS, OPENING_STYLES, cloneCounts, total, minDraftCost } = require('./constants');
+const { TYPES, TYPE_IDS, FIELD_COST, DRAFT_BUDGET, ROSTER_LIMIT, OPENING_STYLES, cloneCounts, total, minDraftCost } = require('./constants');
+const CONSTANTS = require('./constants'); // MAX_BUYS is read live (BUY_CAP can change with the ruleset at a match boot)
 
 // The simulated brain thinks in roles (the role column of units.csv), not unit ids, so a new
 // row is drafted, bought and deployed like the built-in unit with the same role.
@@ -32,11 +35,12 @@ const WEIGHTS = {
   counter: { fast: 3, ranged: 3, armor: 3, healer: 2 },
 };
 // What each role is countered by.
-const COUNTER = { fast: 'armor', ranged: 'fast', armor: 'ranged', healer: 'armor', kamikaze: 'ranged' };
+const COUNTER = { fast: 'armor', ranged: 'fast', armor: 'ranged', healer: 'armor', kamikaze: 'ranged', mortar: 'ranged' };
 // Roles the simulated draft and queue never pick on their own. A kamikaze unit (the Drone) is
 // drafted only by the Ember commander (src/agrts/commander.js draftDrones) or a seat's opening,
 // so a units.csv with a Drone row rolls the same simulated drafts and queues as one without it.
-const SIM_SKIP = new Set(['kamikaze']);
+// A mortar is the same: the commander drafts it (draftMortars) when MORTAR is on.
+const SIM_SKIP = new Set(['kamikaze', 'mortar']);
 const simTypes = () => TYPE_IDS.filter(k => !SIM_SKIP.has(roleOf(k)));
 
 const roleOf = k => (TYPES[k] ? TYPES[k].role : '');
@@ -86,7 +90,9 @@ function simulatedQueue(ctx) {
   const mine = cloneCounts(ctx.ours || {});
   const enemy = cloneCounts(ctx.theirs || {});
   const queue = [];
-  for (let slot = 0; slot < MAX_BUYS; slot++) {
+  // The pre-match queue is a finite plan: 6 slots when BUY_CAP is unlimited (AUTOBUY and BUY go past it).
+  const slots = Number.isFinite(CONSTANTS.MAX_BUYS) ? CONSTANTS.MAX_BUYS : 6;
+  for (let slot = 0; slot < slots; slot++) {
     let pick = null;
     if (style === 'pressure') pick = pickRole(slot === 0 || rng() < 0.65 ? 'fast' : (rng() < 0.5 ? 'ranged' : 'healer'), rng);
     else if (style === 'armor') pick = pickRole(slot === 0 || rng() < 0.55 ? 'armor' : (rng() < 0.5 ? 'ranged' : 'healer'), rng);
@@ -209,12 +215,12 @@ function simulatedConsider(ctx) {
   return { deploy: { types, guard: false, medicUrgent: false }, title, detail };
 }
 
-/** Buy from the front of the queue while credits remain. Land gains stop after six purchases. */
+/** Buy from the front of the queue while credits remain, until the buy cap (ctx.maxBuys, MAX_BUYS: unlimited by default, so the queue's own length ends it). */
 function simulatedSpend(ctx) {
   let left = ctx.credits;
   let n = ctx.bought || 0;
   const queue = ctx.queue || [];
-  const max = ctx.maxBuys || MAX_BUYS;
+  const max = ctx.maxBuys == null ? CONSTANTS.MAX_BUYS : ctx.maxBuys;
   const types = [];
   while (n < max && queue[n]) {
     const type = queue[n];
@@ -259,7 +265,7 @@ function validateOpening(msg) {
   const queue = [];
   if (msg.queue != null) {
     if (!Array.isArray(msg.queue)) return { error: 'queue must be an array of type ids' };
-    if (msg.queue.length > MAX_BUYS) return { error: `queue holds at most ${MAX_BUYS} buys` };
+    if (msg.queue.length > CONSTANTS.MAX_BUYS) return { error: `queue holds at most ${CONSTANTS.MAX_BUYS} buys` };
     for (const t of msg.queue) {
       if (!TYPE_IDS.includes(t)) return { error: `unknown queue type ${t}` };
       queue.push(t);
@@ -306,7 +312,7 @@ function describeHooks() {
     notHere: 'Target choice, movement, pathing, attacking and healing are automatic in src/agrts/match.js.',
     protocol: 'Wire protocol v2, one outbox per seat (docs/TEAM-DECISIONS.md). The line starts with v2. It leads with the delta (their medic changes are named, e.g. E +1M, now 3M), a situation tag (ahead, even, behind, base-threat) plus the count of their units near our base (base-threat 4E), zone totals (z 5/2, c1 when a zone has both sides), an income hint, and can-buy with live price and count (T52x1 S28x2, the same price a BUY is charged). The warrior long-polls GET /api/seat/report?since=&wait= (max 30s) until END. When a relay is configured, next and orders use the same calls on the relay (GET /r/<room>/seat/report and POST /r/<room>/seat/orders) with the same bearer; a relay long-poll counts as talking. POST /api/seat/orders does not emit an ORDER record. The JSON reply carries the OK/ERR lines and a fresh state line. An order after END is refused with ERR match over. READY is written while the match waits for a viewer. COUNTDOWN is not written to the seat. START is written at T0. The note is present when the other side drafts or buys, when autopilot acted, on a T0 miss, and on END. DEPLOY while armed is queued for T0. DEPLOY ALL fields the reserve up to the active cap (ACTIVE_CAP, 6 on the field, drones included; res shows act 6/6), and the rest waits in reserve. Each base pays BASE_INCOME (4) per income tick on top of zone income. fight returns at once. Orders that name a report id record decide_ms, and the END note summarizes them. An optional WHY line on the same post is the dim reason under those orders in the side-panel feed and does not count toward the 3 order lines. Ember simulated decisions show a short reason from the decision label.',
     medicRule: 'Medics stay in reserve until an ally has lost 20 HP or more.',
-    economy: 'A new frontier claim pays 28 credits. Each held enemy-side zone adds 12 every 4.2s. Spending stops after 6 buys.',
+    economy: 'A new frontier claim pays 28 credits. Each held enemy-side zone pays 6 credits every 4.2s (ZONE_INCOME), at most 3 zones count (TERRITORY_CAP) and each base adds 12 per tick (BASE_INCOME). Every unit on the field or in reserve costs upkeep (the support column of units.csv). Buys are unlimited by default (BUY_CAP unset; a number caps them), Breakers are capped at 2 alive, and at most 6 units are active at once.',
   };
 }
 

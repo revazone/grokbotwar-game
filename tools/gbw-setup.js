@@ -142,11 +142,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     watch: h && h.relay && h.relay.watch || null, room: h && h.relay && h.relay.room || null,
     name: info && info.name || null, base: info && info.base || null, seat: info && info.seat || null,
     pvp: h ? (h.pvp ? 'on' : 'off') : null, paused: h ? h.paused : null, created: !existed,
+    ownerLink: null,
   };
+  // Commander chat: the owner's private watch link (docs/COMMANDER-CHAT.md). An older arena has no owner route.
+  if (!flag('no-start') && seat) { const r = ws(['owner-link', '--json']); try { const j = JSON.parse(r.stdout); out.ownerLink = j.link || null; } catch {} }
   if (asJson) { console.log(JSON.stringify(out, null, 1)); return; }
   console.log(`folder: ${out.folder}`);
   console.log(`port:   ${out.port}  (arena ${out.arena}, state/arena.env)`);
   console.log(`seat:   ${out.seat || '?'} ${out.name || label} (${out.base || '?'})`);
   console.log(`watch:  ${out.watch || '(no relay room: the arena runs local only)'}`);
+  if (out.ownerLink) console.log(`owner:  ${out.ownerLink}  (private: open once in your own browser for commander chat; never share it)`);
   console.log(`run every command from the folder: cd ${out.folder} && node tools/warrior-seat.js <command>`);
 })().catch(e => die(e && e.message || String(e)));

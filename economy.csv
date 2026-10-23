@@ -1,0 +1,98 @@
+# GrokBotWar economy and tower rules. One number per row. docs/RULES-REMOTE.md.
+# The arena downloads this file (and units.csv) from the `rules` branch before each match. An env variable named in the description wins over the file.
+key,value,description
+base_income,15,"Credits each base pays its side every income tick, on top of zone income. 0 = off. Env BASE_INCOME overrides."
+zone_income,0,"Credits per held enemy-half zone each income tick (the frontier zones that count, see territory_cap)."
+income_tick_s,3,Seconds between income ticks (sim seconds).
+zone_capture_cr,0,One-time credits for capturing a frontier zone.
+buy_cap,0,"Buys per side per match (queue, AUTOBUY and BUY together). 0 = unlimited. Env BUY_CAP overrides."
+active_cap,6,Units a side may have on the field at once (drones included). 0 = no cap. Env ACTIVE_CAP overrides.
+reserve_cap,0,Auto-buy stops once this many units wait in reserve. 0 = off. Env RESERVE_CAP overrides.
+damage_scale,0.7,"Multiplier on every unit damage (shots, splash, drones, vs base and turret). Not turret/tower damage or healing. Env DAMAGE_SCALE overrides."
+territory_cap,3,Most enemy-half zones that pay zone income. 0 = every zone pays. Env TERRITORY_CAP overrides.
+territory_diminish,1,Each extra counted zone pays this fraction of the one before. 1 = off (full price).
+catchup_income,0,"Credits per zone of map deficit each income tick, for the side behind. 0 = off."
+breaker_discount,0,Fraction off the Breaker live price while a side holds fewer zones. 0 = off (below 1).
+bank_decay,0,Fraction of the bank above one Breaker price removed each income tick while the field is full. 0 = off.
+time_limit_s,360,Match time limit with towers on (sim seconds); then Team HP decides. Env TIME_LIMIT_S overrides.
+match_cap_s,480,Match time limit with TOWERS=0 (sim seconds); then the base with more HP wins.
+turret_hp,120,Base turret HP. 0 = no base turrets. Env TURRET_HP overrides.
+turret_range,110,Base turret range (px).
+turret_dmg,10,Base turret damage per shot (not scaled by damage_scale).
+turret_cool,1,Seconds between base turret shots.
+turret_first_shot,0.5,Seconds from a target entering range to the first base turret shot.
+team_hp_floor,20,"Indirect Team HP loss (towers, zones, siege) never takes a side below this."
+team_hp,100,"Starting Team HP of each side in the launch flow (the HP bars). At 0 that side loses and the match ends. The other HP numbers below (floor, comeback, regen) are absolute, tuned for 100."
+hp_per_dmg_base,1,"Team HP lost per point of damage dealt to a side's base (direct hits; the depot shield x0.6 still applies first). 1 = the sim's own rule."
+hp_per_dmg_turret,0.1,"Team HP lost per point of HP the base turret loses (120 HP turret = 12 Team HP when destroyed)."
+hp_per_dmg_gun,0.08,"Team HP lost per point of HP the gun tower loses (100 HP tower = 8 Team HP; same as the old gun_hp_cost)."
+hp_per_dmg_hospital,0.07,"Team HP lost per point of HP the field hospital loses (120 HP = 8.4 Team HP; about the old hospital_hp_cost). A rebuilt hospital costs again."
+hp_per_dmg_depot,0.125,"Team HP lost per point of HP the depot loses (160 HP = 20 Team HP; same as the old depot_hp_cost)."
+hp_per_dmg_post,0.08,"Team HP lost per point of HP the forward post loses (100 HP = 8 Team HP; the gun tower weight)."
+post_on,1,"Forward posts on (1) or off (0), launch flow only (docs/FORWARD-POST.md)."
+post_a_zone,2,"Forward post A zone, Green numbering (Green z2; Ember mirrors to z7). Sits in the top half for Green, bottom for Ember."
+post_b_zone,4,"Forward post B zone, Green numbering (Green z4; Ember mirrors to z5). Sits below A for Green (lower half), mirrored for Ember."
+post_build_s,12,"Seconds a side must hold a post's zone (and its unlock zone) with no enemy ground unit in the post zone before the post stands."
+post_unlock_offset,1,"Zones beyond a post (toward the enemy) a side must also hold before the post unlocks and builds (Green OB z2 needs z3, FOB z4 needs z5; Ember mirrors). 0 = post zone only."
+scout_capture_mult,2,"Zone capture: each Scout (units.csv role fast) counts this many units toward who holds the zone, and a zone being won with a Scout in it flips this much faster. 1 = off (docs/SCOUT.md)."
+scout_post_build_s,6,"Forward post build time while one of the side's Scouts (role fast) stands in the post zone (instead of post_build_s). Same as post_build_s = off."
+scout_dive_range,260,"Flanker AI: a Scout picks the nearest enemy it has a bonus_vs against (mortar, medic) within this many px over nearer front-line units. 0 = off."
+post_hp,100,"Forward post HP (a gun tower's)."
+post_rebuild_s,20,"Seconds after a post is destroyed before it can start building again."
+comeback_below,40,"Below this Team HP, indirect losses are softened."
+comeback_mult,0.5,Share of an indirect loss that still lands below comeback_below.
+zone_loss_hp,1,Scale on the zone-loss weights (zone_weight_1..8). 0 = no zone-loss HP.
+zone_hold_s,10,Seconds a zone must be held before losing it costs HP.
+zone_loss_cooldown_s,30,The same zone costs HP at most once per this many seconds.
+siege_drain,0.1,Team HP per second per enemy ground unit sieging your two home zones. 0 = off.
+siege_max,0.2,Most siege drain per second.
+zone_weight_1,5,"Team HP lost when the owner loses their home zone (z1 for Green, z8 for Ember), before zone_loss_hp scale."
+zone_weight_2,4,"Same, second zone from home."
+zone_weight_3,3,"Same, third zone from home."
+zone_weight_4,2,"Same, fourth zone from home."
+zone_weight_5,2,"Same, fifth zone from home."
+zone_weight_6,1,"Same, sixth zone from home."
+zone_weight_7,1,"Same, seventh zone from home."
+zone_weight_8,1,"Same, the enemy home zone."
+points_gun,2,Tie-break points for taking a gun tower (time limit with equal Team HP).
+points_hospital,1,Tie-break points for taking a field hospital.
+points_depot,3,Tie-break points for taking a depot.
+hospital_hp,120,Field hospital HP.
+hospital_armor,0,Share of incoming damage the hospital ignores (0 = soft).
+hospital_heal,14,HP per second healed per unit in a hospital slot.
+hospital_heal_to,0.8,A healed unit leaves at this share of its max HP.
+hospital_slots,2,Units healed at once.
+hospital_retreat,0.4,A ground unit at or below this share of max HP walks to the hospital on its own.
+hospital_quiet_s,3,Seconds since the last hit (and no enemy in range) before a retreat starts.
+hospital_rebuild_s,60,Seconds a destroyed hospital stays down.
+hospital_rebuild_cr,40,"Credits to rebuild the hospital, paid when the timer ends."
+hospital_regen_s,15,Seconds per 1 Team HP regenerated while the hospital stands. 0 = off. Env HOSP_REGEN_S overrides.
+hospital_regen_min,50,Hospital regen only runs at or above this Team HP. Env HOSP_REGEN_MIN overrides.
+hospital_regen_max,90,Hospital regen stops at this Team HP. Env HOSP_REGEN_MAX overrides.
+hospital_hp_cost,0,"Team HP the owner loses when the hospital is killed. 0 in the range: the per-damage rule hp_per_dmg_* (above) replaces this one-off cost, so a kill is not charged twice. Env HOSPITAL_HP_COST overrides."
+hospital_cr_bonus,20,Credits the attacker gets for killing a hospital. Env HOSP_CR_BONUS overrides.
+gun_hp,100,Gun tower HP. Env GUN_HP overrides.
+gun_dmg,6,Gun tower damage per shot. Env GUN_DMG overrides.
+gun_cool,1,Seconds between gun tower shots. Env GUN_COOL overrides.
+gun_range,105,Gun tower range (px). Env GUN_RANGE overrides.
+gun_hp_cost,0,"Team HP the owner loses when the gun tower is killed. 0 in the range: the per-damage rule hp_per_dmg_* (above) replaces this one-off cost, so a kill is not charged twice. Env GUN_HP_COST overrides."
+gun_cr_bonus,25,Credits the attacker gets for killing a gun tower. Env GUN_CR_BONUS overrides.
+depot_hp,160,Depot HP. Env DEPOT_HP overrides.
+depot_shield,0.6,Direct damage to the base is multiplied by this while the depot stands. Env DEPOT_SHIELD overrides.
+depot_rebuild_s,60,Seconds a destroyed depot stays down. 0 = never rebuilt. Env DEPOT_REBUILD_S overrides.
+depot_rebuild_cr,40,Credits to rebuild the depot. Env DEPOT_REBUILD_CR overrides.
+depot_hp_cost,0,"Team HP the owner loses when the depot is killed. 0 in the range: the per-damage rule hp_per_dmg_* (above) replaces this one-off cost, so a kill is not charged twice. Env DEPOT_HP_COST overrides."
+depot_cr_bonus,40,Credits the attacker gets for killing a depot. Env DEPOT_CR_BONUS overrides.
+depot_income,0,Part of base_income the depot pays while it stands. Env DEPOT_INCOME overrides.
+range_buy,0,"BUY RANGE on (1) or off (0): a range boost for the gun tower and base turret, counted in rounds (docs/BUY-RANGE.md). Env BUY_RANGE overrides."
+range_buy_cr,60,"Credits for BUY RANGE (both weapons); one weapon costs 70% of it. Env RANGE_BUY_CR overrides."
+range_buy_pct,40,"Percent more range while the boost has rounds. Env RANGE_BUY_PCT overrides."
+range_buy_s,30,"Seconds of a weapon's own fire one purchase is worth: rounds = round(range_buy_s / that weapon's cooldown), gun tower and turret each. Env RANGE_BUY_S overrides."
+range_buy_rounds_gun,0,"Rounds for the gun tower(s) per purchase. 0 = derive from range_buy_s. Env RANGE_BUY_ROUNDS_GUN overrides."
+range_buy_rounds_turret,0,"Rounds for the base turret per purchase. 0 = derive from range_buy_s. Env RANGE_BUY_ROUNDS_TURRET overrides."
+range_buy_cool_s,0,"Seconds between purchases for one weapon. 0 = none (a running boost cannot be topped up anyway). Env RANGE_BUY_COOL_S overrides."
+range_buy_max,3,"BUY RANGE purchases per side per match. Env RANGE_BUY_MAX overrides."
+spawn_safe_radius,160,"Safe spawn: a standing OB/FOB is skipped for new units while any enemy ground unit is within this many px of it (both sides; docs/SAFE-SPAWN.md)."
+spawn_safe_hit_s,3,"Safe spawn: a standing OB/FOB is also skipped for this many seconds after it takes damage. Main is always allowed."
+no_clock,0,"Match clock on (default 0): time_limit_s (360) then _timeUp decides (Team HP, towers, zones). 1 = no clock, Team HP 0 only end. Env NO_CLOCK overrides."
+draft_carry,1,"Unspent draft budget (of 200) becomes the starting bank (The Range c987359). 0 = off. Env DRAFT_CARRY overrides."

@@ -9,6 +9,13 @@
   let land = [], units = [], hp = [100, 100], elapsed = 0;
   let walls = [], rough = [], sparks = [], shots = [], combatFx = [], spawnFx = [];
   let capturePulses = [], spendPulses = [], healPopups = [], cameraShake = 0;
+  // Viewer gate id from the owner link's fragment (#g=<id>), presented on /events. Without it this page only spectates.
+  let GATE = null;
+  try {
+    const gm = /(?:^#|&)g=([0-9a-f]{32})(?:&|$)/.exec(location.hash || '');
+    if (gm) { GATE = gm[1]; sessionStorage.setItem('gbw-gate:local', GATE); } else GATE = sessionStorage.getItem('gbw-gate:local');
+  } catch {}
+  if (!/^[0-9a-f]{32}$/.test(GATE || '')) GATE = null;
   window.__gbw = { get state() { return state; } };
 
   function resize() {
@@ -28,7 +35,7 @@
   // Complete arsenal: one row per unit type (zeros dimmed). Desktop shows icon, name and × count; the phone
   // layout turns the same rows into icon + × count chips in CSS. The icon is the field's own drawUnit shape.
   function unitIcon(k, side) {
-    const url = window.GbwAgrtsDraw && GbwAgrtsDraw.icon ? GbwAgrtsDraw.icon(k.type, side, 16) : '';
+    const url = window.GbwAgrtsDraw && GbwAgrtsDraw.icon ? GbwAgrtsDraw.icon(k.type, side, 26) : '';
     return url ? `<img class="uicon" src="${url}" alt="">` : `<i class="mini" style="color:${esc(k.color)}">${esc(k.glyph)}</i>`;
   }
   function inventoryMarkup(list, side) {
@@ -38,6 +45,40 @@
   // Rewrite a panel block only when its markup changes, so the icons do not reload every frame.
   const lastHtml = {};
   function setHtml(id, html) { const n = $(id); if (n && lastHtml[id] !== html) { lastHtml[id] = html; n.innerHTML = html; } }
+  // Comm net scrollback: the page keeps up to 200 entries per side and only prepends new rows, so a scrolled-back
+  // view and any text selection survive updates. Stuck to the top (newest) only while the user is at the top.
+  let commNet = null; // COMM NET exchanges view (agrts-commnet.js), mounted on the first frame
+  const commHist = [[], []];
+  const commKey = r => `${r.at}|${r.from}|${r.text}`;
+  function commsRender(s, rows) {
+    const n = $('dfeed' + s); if (!n) return;
+    const hist = commHist[s];
+    if (!rows || !rows.length) { if (hist.length || lastHtml['dfeed' + s] !== 'c0') { hist.length = 0; n.innerHTML = ''; lastHtml['dfeed' + s] = 'c0'; } return; }
+    if (lastHtml['dfeed' + s] !== 'c') { n.innerHTML = ''; hist.length = 0; lastHtml['dfeed' + s] = 'c'; }
+    let fresh = rows;
+    if (hist.length) {
+      const top = commKey(hist[0]), i = rows.findIndex(r => commKey(r) === top);
+      if (i >= 0) fresh = rows.slice(0, i);
+      else if (String(rows[0].at) < String(hist[0].at)) { n.innerHTML = ''; hist.length = 0; } // new match
+    }
+    if (!fresh.length) return;
+    const html = fresh.map(r => {
+      const k = { neg: 'err', frago: 'deploy', wilco: 'hold', net: 'bank', threat: 'err', loss: 'err' }[r.kind] || 'hold';
+      return `<div class="crow"><span class="at">${esc(r.at)}</span> <b class="k-${k}">${esc(r.from)}:</b> ${esc(r.text)}</div>`;
+    }).join('');
+    const atTop = n.scrollTop <= 2, h0 = n.scrollHeight;
+    n.insertAdjacentHTML('afterbegin', html);
+    hist.unshift(...fresh);
+    while (hist.length > 200) { hist.pop(); if (n.lastElementChild) n.lastElementChild.remove(); }
+    if (atTop) n.scrollTop = 0; else n.scrollTop += n.scrollHeight - h0;
+  }
+  // Comm net (src/agrts/comms.js renders the text in the arena; this is only layout, easy to replace).
+  function commsMarkup(rows) {
+    return rows.slice(0, 12).map(r => {
+      const k = { neg: 'err', frago: 'deploy', wilco: 'hold', net: 'bank', threat: 'err', loss: 'err' }[r.kind] || 'hold';
+      return `<div class="crow"><span class="at">${esc(r.at)}</span> <b class="k-${k}">${esc(r.from)}:</b> ${esc(r.text)}</div>`;
+    }).join('');
+  }
   function feedMarkup(rows) {
     if (!rows || !rows.length) return '<div class="drow wait"><span class="detail">—</span></div>';
     return rows.slice(0, 8).map(r => {
@@ -52,6 +93,7 @@
   function paintHud(st) {
     // The arena's unit table (units.csv) first, so arsenal icons and the field use the current shapes.
     if (window.GbwAgrtsDraw && GbwAgrtsDraw.setTable) GbwAgrtsDraw.setTable(st.unitTable);
+    { const eb = document.querySelector('.eyebrow'); if (eb) eb.textContent = 'AGENTIC REAL-TIME STRATEGY' + (st.rules && st.rules.version ? ` · RULES ${st.rules.version} ${st.rules.source || ''}` : ''); }
     paintGate(st);
     $('toast').classList.toggle('show', st.status === 'over');
     if (st.status === 'over' && st.winner) {
@@ -75,10 +117,12 @@
       $('nextbuy' + s).textContent = sd.next;
       $('posture' + s).textContent = sd.posture;
       $('healing' + s).textContent = sd.healing;
-      setHtml('dfeed' + s, feedMarkup(sd.feed));
-      $('mobile-decision' + s).textContent = sd.mobile;
+      // COMM NET exchanges (agrts-commnet.js) when loaded; the old flat feed otherwise.
+      if (window.GbwCommNet) { /* rendered below, once per frame */ } else if (sd.comms && sd.comms.length) commsRender(s, sd.comms); else { if (lastHtml['dfeed' + s] === 'c') commHist[s].length = 0; setHtml('dfeed' + s, feedMarkup(sd.feed)); }
+      { const m = $('mobile-decision' + s); if (m) m.textContent = sd.commShort || sd.mobile || ''; }
       setHtml('inventory' + s, inventoryMarkup(sd.inventory, s));
     });
+    if (window.GbwCommNet) { commNet = commNet || GbwCommNet.attach({}); commNet.update(st); }
     const notice = (st.notices || []).filter(n => n.id > seenNotice).pop();
     if (notice) {
       seenNotice = notice.id;
@@ -101,8 +145,14 @@
       $('gate-title').textContent = '';
       $('gate-count').textContent = String(st.countdown || '');
     } else {
-      $('gate-kicker').textContent = 'Waiting for viewer';
-      $('gate-title').textContent = "Match starts when you're watching";
+      // Armed behind the viewer gate: only a page opened with the gate id (#g=...) starts it; any other page just spectates.
+      if (st.gated && !GATE) {
+        $('gate-kicker').textContent = 'A new match is waiting';
+        $('gate-title').textContent = 'Open the new link from your commander to start it. This page is only spectating.';
+      } else {
+        $('gate-kicker').textContent = 'Waiting for viewer';
+        $('gate-title').textContent = "Match starts when you're watching";
+      }
       $('gate-count').textContent = '';
     }
   }
@@ -121,7 +171,8 @@
     GbwAgrtsDraw.paint(ctx, {
       cssW, cssH, dpr, w: W, h: H, land, walls, rough, hp, elapsed,
       units, shots, sparks, combatFx, spawnFx, capturePulses, spendPulses, healPopups, cameraShake,
-      unitTable: state.unitTable,
+      unitTable: state.unitTable, turrets: state.turrets || [], hospitals: state.hospitals || [],
+      towersOn: state.towersOn, towers: state.towers, shield: state.shield, hpEvents: state.hpEvents, towerPts: state.towerPts, timeLimit: state.timeLimit,
     });
   }
 
@@ -132,7 +183,7 @@
     requestAnimationFrame(loop);
   }
 
-  const es = new EventSource('/events');
+  const es = new EventSource('/events' + (GATE ? '?g=' + GATE : ''));
   es.onmessage = ev => {
     try { state = JSON.parse(ev.data); paintHud(state); }
     catch (e) { /* ignore a bad event */ }

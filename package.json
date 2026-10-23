@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "verify": "node tools/verify.js",
-    "headless": "node tools/headless-match.js"
+    "headless": "node tools/headless-match.js",
+    "test": "node tools/test-mortar.js && node tools/test-territory-income.js && node tools/test-field-hospital.js && node tools/test-stances.js && node tools/test-balance-flags.js && node tools/test-focus-autobuy.js && node tools/test-turret.js && node tools/check-template.js && node tools/check-openings.js && node tools/test-live-defaults.js && node tools/test-game-speed.js && node tools/test-mortar-follow.js && node tools/test-start-env.js && node tools/test-damage-scale.js && node tools/test-path-fuzz.js && node tools/test-towers-hp.js && node tools/test-towers-rules.js && node tools/test-towers-gun.js && node tools/test-towers-depot.js && node tools/test-towers-watch.js && node tools/test-sfx.js && node tools/test-towers-ai.js && node tools/test-rules-remote.js && node tools/test-viewer-gate-unit.js && node tools/test-strategy.js && node tools/test-msg-reset.js && node tools/test-arena-width.js && node tools/test-home.js && node tools/test-desktop-fit.js && node tools/test-rules-vps.js && node tools/test-first-paint.js && node tools/test-gate-button.js && node tools/test-buy-towers.js && node tools/test-buy-range.js && node tools/test-plan-audit.js && node tools/test-drone-pack.js && node tools/test-canbuy-fit.js && node tools/test-report-v7.js && node tools/test-medic-escort.js && node tools/test-match-video.js && node tools/test-improve.js"
   },
   "license": "UNLICENSED",
   "dependencies": {

@@ -11,9 +11,11 @@
 const fs = require('fs');
 const path = require('path');
 const LOCK = require('./units-lock');
+const RULES = require('./rules');
+const { parseCsv } = require('./csv');
 
-const ROLES = ['fast', 'ranged', 'armor', 'healer', 'kamikaze'];
-const SHAPES = ['arrow', 'diamond', 'hex', 'disc', 'circle', 'cross'];
+const ROLES = ['fast', 'ranged', 'armor', 'healer', 'kamikaze', 'mortar'];
+const SHAPES = ['arrow', 'diamond', 'hex', 'disc', 'circle', 'cross', 'tube'];
 const COLUMNS = ['id', 'code', 'name', 'draft_cost', 'live_cost', 'hp', 'damage', 'range', 'speed', 'cooldown_s',
   'radius', 'color', 'glyph', 'description', 'heal', 'heal_range', 'role', 'shape'];
 // Optional columns. A file without them, or a blank cell, gets the default, so a row that leaves
@@ -33,10 +35,17 @@ const COLUMNS = ['id', 'code', 'name', 'draft_cost', 'live_cost', 'hp', 'damage'
 //   plane             ground, air, or any other lowercase word: the layer the unit moves in. Units
 //                     are solid (a circle of their radius) only to units on the same plane, so an
 //                     air unit passes over every ground unit. Blank = air when flying, else ground.
+//   min_range         px. The gun cannot fire at anything closer than this (0 = no dead zone).
+//   indirect          yes/no. The shot ignores walls (line of sight). Blank = no.
+//   support           CR this unit costs its side every income tick while it is on the field (upkeep,
+//                     about 4% of live_cost). The bank floors at 0. Blank = 0.
+//   spawn_count       units one buy fields (one price; max_alive still counts each one, a pack spawns as many as fit). Blank = 1.
+//                     Drones keep their own pack (DRONE_PACK).
 const OPTIONAL = ['splash_radius', 'splash_falloff', 'base_mult', 'friendly_fire', 'death_blast_mult', 'flying',
-  'max_alive', 'max_per_buy', 'buy_cooldown_s', 'bonus_vs', 'blast_resist', 'plane'];
+  'max_alive', 'max_per_buy', 'buy_cooldown_s', 'bonus_vs', 'blast_resist', 'plane', 'min_range', 'indirect', 'support', 'spawn_count'];
 const DEFAULTS = Object.freeze({ splash: 0, falloff: 0, baseMult: 1, friendlyFire: false, deathBlast: 0, flying: false,
-  maxAlive: 0, maxPerBuy: 0, buyCooldown: 0, bonusVs: Object.freeze({}), blastResist: 0, plane: 'ground' });
+  maxAlive: 0, maxPerBuy: 0, buyCooldown: 0, bonusVs: Object.freeze({}), blastResist: 0, plane: 'ground',
+  minRange: 0, indirect: false, support: 0, spawnCount: 1 });
 const MAX_UNITS = 26;
 
 // Used only when the file is missing or bad at startup. Same numbers as units.csv in the repo.
@@ -54,7 +63,7 @@ const FIELD_COST = {};
 const CODE_BY_TYPE = {};
 const TYPE_BY_CODE = {};
 
-const status = { path: '', source: 'builtin', loadedAt: null, error: '', version: 0, text: null, badText: null };
+const status = { path: '', rules: '', source: 'builtin', loadedAt: null, error: '', version: 0, text: null, badText: null };
 let logger = msg => console.log(msg);
 // Locked unit table (src/agrts/units-lock.js): is the table in play the official one? Checked at
 // every reload, on the text actually installed (the last good file), never changes play.
@@ -62,6 +71,9 @@ let lock = { mode: 'warn', hash: '', official: false, pvp: true, error: '' };
 let lockWarned = '';
 function checkLock() {
   lock = LOCK.check(status.source === 'builtin' ? null : status.text);
+  // A table that came from the published ruleset (rules.js) passed validation there: it is the official table
+  // by definition, even when it differs from the bundled units.lock.json. rules.js logs the old and new hash once.
+  if (status.rules && lock.hash && lock.official === false) { lock = { ...lock, official: true, pvp: true, error: '' }; lockWarned = ''; return; }
   if (lock.official !== false) { lockWarned = ''; return; }
   const key = `${lock.mode}:${lock.hash}:${lock.error}`;
   if (key === lockWarned) return;
@@ -74,34 +86,6 @@ function checkLock() {
 
 function csvPath() {
   return path.resolve(process.env.UNITS_CSV || path.join(__dirname, '..', '..', 'units.csv'));
-}
-
-/** RFC-4180-ish: commas, double quotes ("" inside quotes), CRLF or LF. Returns rows of { line, cells }. */
-function parseCsv(text) {
-  const rows = [];
-  let cells = [], cell = '', quoted = false, line = 1, rowLine = 1, i = 0;
-  const s = String(text).replace(/^\uFEFF/, '');
-  const endCell = () => { cells.push(cell); cell = ''; };
-  const endRow = () => { endCell(); rows.push({ line: rowLine, cells }); cells = []; rowLine = line; };
-  while (i < s.length) {
-    const ch = s[i];
-    if (quoted) {
-      if (ch === '"') {
-        if (s[i + 1] === '"') { cell += '"'; i += 2; continue; }
-        quoted = false; i++; continue;
-      }
-      if (ch === '\n') line++;
-      cell += ch; i++; continue;
-    }
-    if (ch === '"' && cell.trim() === '') { quoted = true; cell = ''; i++; continue; }
-    if (ch === ',') { endCell(); i++; continue; }
-    if (ch === '\r') { i++; continue; }
-    if (ch === '\n') { line++; endRow(); i++; continue; }
-    cell += ch; i++;
-  }
-  if (quoted) throw new Error(`line ${rowLine}: unclosed quote`);
-  if (cell !== '' || cells.length) endRow();
-  return rows.filter(r => !(r.cells.length === 1 && r.cells[0].trim() === '') && !/^\s*#/.test(r.cells[0] || ''));
 }
 
 /** Parse and validate the whole file. Throws one Error naming the line and column on the first problem. */
@@ -184,6 +168,10 @@ function parseUnits(text) {
       bonusVs: {},
       blastResist: num('blast_resist', { blank: DEFAULTS.blastResist, max: 1 }),
       plane: '',
+      minRange: num('min_range', { blank: DEFAULTS.minRange, max: 400 }),
+      indirect: flag('indirect'),
+      support: num('support', { blank: DEFAULTS.support, int: true, max: 50 }),
+      spawnCount: num('spawn_count', { blank: DEFAULTS.spawnCount, int: true, max: 6 }),
     };
     const plane = get('plane').toLowerCase();
     if (plane && !/^[a-z]{1,12}$/.test(plane)) throw new Error(`${at}: plane must be one lowercase word such as ground or air (got "${get('plane')}")`);
@@ -197,6 +185,12 @@ function parseUnits(text) {
       }
     }
     if (role === 'kamikaze' && !(unit.dmg > 0)) throw new Error(`${at}: a kamikaze unit needs damage above 0 (its blast)`);
+    if (role === 'mortar') {
+      if (!(unit.minRange > 0)) throw new Error(`${at}: a mortar needs min_range above 0`);
+      if (!(unit.minRange < unit.range)) throw new Error(`${at}: min_range must be inside range`);
+      if (!(unit.splash > 0)) throw new Error(`${at}: a mortar needs splash_radius above 0`);
+      if (!unit.indirect) throw new Error(`${at}: a mortar fires indirectly (indirect yes)`);
+    }
     if (unit.r > 30) throw new Error(`${at}: radius must be 30 or less`);
     if (role === 'healer' && !(unit.heal > 0 && unit.healRange > 0)) throw new Error(`${at}: a healer needs heal and heal_range above 0`);
     if (role !== 'healer' && (unit.heal > 0 || unit.healRange > 0)) throw new Error(`${at}: heal and heal_range only work with role healer; set them to 0`);
@@ -227,6 +221,7 @@ function install(list, source) {
       flying: !!u.flying, maxAlive: u.maxAlive, maxPerBuy: u.maxPerBuy, buyCooldown: u.buyCooldown,
       bonusVs: { ...(u.bonusVs || {}) }, blastResist: u.blastResist,
       plane: u.plane || (u.flying ? 'air' : 'ground'),
+      minRange: u.minRange || 0, indirect: !!u.indirect, support: u.support || 0, spawnCount: u.spawnCount || 1,
     };
     TYPE_IDS.push(u.id);
     FIELD_COST[u.id] = u.live;
@@ -244,10 +239,14 @@ function install(list, source) {
  * Only call this between matches.
  */
 function reload() {
-  const file = csvPath();
+  // A downloaded ruleset (rules.js: remote or cache) supplies the text; otherwise the local file, as before.
+  RULES.boot();
+  const supplied = RULES.activeUnitsText();
+  status.rules = supplied != null ? RULES.status().source : '';
+  const file = supplied != null ? `rules:${status.rules}` : csvPath();
   status.path = file;
   let text;
-  try { text = fs.readFileSync(file, 'utf8'); }
+  try { if (supplied != null) text = supplied; else text = fs.readFileSync(file, 'utf8'); }
   catch (e) {
     const msg = `cannot read ${file}: ${e.code || e.message}`;
     if (status.error !== msg) logger(`[units] ${msg}; keeping the current table (${TYPE_IDS.join(', ')})`);

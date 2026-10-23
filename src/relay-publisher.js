@@ -53,27 +53,32 @@ const pickAvail = a => { const o = { state: a.state, since: a.since }; if (a.mat
 function slimAgrts(st) {
   const teams = st.teams || [], robots = st.robots || [], shells = st.shells || [];
   return {
-    mode: 'agrts', game: st.game, matchNo: st.matchNo, seed: st.seed,
+    mode: 'agrts', game: st.game, matchNo: st.matchNo, boot: st.boot || undefined, seed: st.seed,   // boot: the arena start id; the page keys its message panels on boot + match number
     tick: st.tick, steps: st.steps, maxTicks: st.maxTicks, status: st.status,
-    paused: st.paused, held: st.held, phase: st.phase || 'live', countdown: st.countdown == null ? null : st.countdown, viewers: st.viewers || 0,
-    elapsed: r1(st.elapsed || 0), clock: st.clock, speed: st.speed,
+    paused: st.paused, held: st.held, phase: st.phase || 'live', countdown: st.countdown == null ? null : st.countdown, viewers: st.viewers || 0, gated: st.gated ? true : undefined, gateReleased: st.gateReleased ? true : undefined,
+    elapsed: r1(st.elapsed || 0), clock: st.clock, speed: st.speed, gameSpeed: st.gameSpeed,
     tickMs: st.tickMs, autoRestart: st.autoRestart, restartInMs: st.restartInMs,
     w: st.w, h: st.h, arena: st.arena, robotRadius: st.robotRadius,
     hp: (st.hp || []).map(v => r1(Math.max(0, v))),
     winner: st.winner, sides: st.sides || [],
     unitTable: st.unitTable || [],   // units.csv rows the watch page draws from (shape, color, glyph, radius)
+    rules: st.rules ? { version: String(st.rules.version || '').slice(0, 8), source: String(st.rules.source || '').slice(0, 8) } : undefined, // ruleset in play (src/agrts/rules.js): short version + remote|cache|local
     // Locked unit table (docs/SPEC.md §5.4): the table's sha256 and whether it is the official one.
     unitsLock: st.unitsLock ? { hash: st.unitsLock.hash, official: st.unitsLock.official } : undefined,
     // Version stamp (docs/SPEC.md §5.4 "Version stamp"): { game, protocol, unitsHash, official }. The relay keeps the latest frame
     // as-is, so GET <relay>/r/<room>/state shows it with no relay change.
-    version: st.version ? { game: st.version.game, protocol: st.version.protocol, unitsHash: st.version.unitsHash, official: st.version.official } : undefined,
+    version: st.version ? { ...st.version } : undefined,
     // Availability (docs/SPEC.md §5.4 "Availability", PvP step 3): { state: free|busy|reserved, since, matchId?, expiresAt? }.
     // Rides the same frame, so GET <relay>/r/<room>/state shows it with no relay change.
     availability: st.availability ? pickAvail(st.availability) : undefined,
     land: (st.land || []).map(v => r1(v)), walls: st.walls || [], rough: st.rough || [],
     cameraShake: r1(st.cameraShake || 0),
+    turrets: st.turrets || [],   // base turrets: { side, x, y, hp, max, alive, range, angle, aim, firedAt, hitFlash, downAt }
+    ...(st.hospitals && st.hospitals.length ? { hospitals: st.hospitals } : {}), // FIELD_HOSPITAL=1 only
+    // TOWERS=1 only (src/agrts/towers.js): gun towers and depots, the base shield flags, the last 2 s of Team HP events, tie-break points.
+    ...(st.towersOn ? { towersOn: true, timeLimit: st.timeLimit, teamHpFloor: st.teamHpFloor, towers: st.towers || [], shield: st.shield || [false, false], hpEvents: st.hpEvents || [], towerPts: st.towerPts || [0, 0] } : {}),
     units: st.units || [],
-    shots: (st.shots || []).map(s => ({ x: r1(s.x), y: r1(s.y), tx: r1(s.tx), ty: r1(s.ty), type: s.type, side: s.side, col: s.col, life: r1(s.life), maxLife: s.maxLife })),
+    shots: (st.shots || []).map(s => ({ x: r1(s.x), y: r1(s.y), tx: r1(s.tx), ty: r1(s.ty), type: s.type, side: s.side, col: s.col, life: r1(s.life), maxLife: s.maxLife, ...(s.arc ? { arc: true } : {}) })),
     sparks: (st.sparks || []).map(p => ({ x: r1(p.x), y: r1(p.y), life: r1(p.life), col: p.col })),
     combatFx: st.combatFx || [], spawnFx: st.spawnFx || [], capturePulses: st.capturePulses || [],
     spendPulses: st.spendPulses || [], healPopups: st.healPopups || [],

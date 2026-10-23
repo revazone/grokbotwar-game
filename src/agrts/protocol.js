@@ -8,11 +8,23 @@
 // Orders: BUY, DEPLOY, HOLD, BANK, FOCUS, AUTOBUY (FOCUS and AUTOBUY are standing orders for the match),
 // and the radio orders MOVE, ASSIST, FALLBACK, CLEAR for single units or groups (docs/RADIO-ORDERS.md).
 
-const { TYPE_IDS, FIELD_COST, ROSTER_LIMIT, MAX_BUYS, ZONES, ASSIST_RADIUS_ORDER } = require('./constants');
-// Unit codes (S R T M today) come from the code column of units.csv. Live objects, refilled between matches.
-const { CODE_BY_TYPE, TYPE_BY_CODE } = require('./units');
+const { TYPE_IDS, FIELD_COST, ROSTER_LIMIT, ZONES, ASSIST_RADIUS_ORDER } = require('./constants');
+const CONSTANTS = require('./constants'); // MAX_BUYS is read live (BUY_CAP can change with the ruleset at a match boot)
+// Unit codes come from the code column of units.csv. Live objects, refilled between matches.
+const U = require('./units');
+const { CODE_BY_TYPE, TYPE_BY_CODE } = U;
 
-const PROTOCOL_VERSION = 2;
+/** A code the seat may order. The mortar is unknown while MORTAR is off (docs/MORTAR.md). */
+function orderType(code) {
+  const type = TYPE_BY_CODE[code];
+  if (!type) return null;
+  if (U.roleOf(type) === 'mortar' && !require('./version').mortarOn()) return null;
+  return type;
+}
+const ST = require('./stance');
+
+const PROTOCOL_VERSION_TOWERS = 6; // 6: towers (TOWERS=1): `gun` / `dep` in res, FOCUS GUN / FOCUS DEPOT. Reports say v5 while TOWERS is off.
+const PROTOCOL_VERSION = 5; // 3: base turret (`tur` in res, FOCUS TURRET). 4: commander notes (`cmdr` section, ACK order). 5: unit stances (STANCE order, `[C]` on our unit tokens)
 const DEBOUNCE_S = 2;
 const HEARTBEAT_S = 8;
 // With per-unit IDs a 24-unit field needs about 200 characters on its own, so the line
@@ -78,18 +90,27 @@ function situationText(view) {
  * The count is how many the bank covers, capped by the room left under the 24-unit roster and reserve cap.
  * `none` when the bank is short, or the roster or the reserve is already at 24.
  */
-function canBuyCodes(bank, rosterTotal, reserveTotal, priceOf, roomOf) {
+/** rosterTotal: living units (field + reserve), never the bought-ever count. */
+// fitOf(type): how many of that buy fit on the field now (free active slots minus units already in reserve; a Drone buy is a pack and needs a slot per drone).
+// When it is under the count, the token gains `(<n>fit)`, e.g. `R40x2(1fit)`; the extra buys would only wait in reserve.
+function canBuyCodes(bank, rosterTotal, reserveTotal, priceOf, roomOf, fitOf) {
   const room = Math.min(ROSTER_LIMIT - (rosterTotal | 0), ROSTER_LIMIT - (reserveTotal | 0));
   if (room <= 0) return 'none';
   const price = typeof priceOf === 'function' ? priceOf : (type => FIELD_COST[type]);
   // roomOf(type): what that type's own caps still allow (units.csv max_alive, max_per_buy). A type at its cap is left out.
   const cap = typeof roomOf === 'function' ? roomOf : (() => Infinity);
   const funds = Math.max(0, Math.floor(+bank || 0));
-  const items = TYPE_IDS.map(type => ({ type, cost: price(type), room: Math.min(room, cap(type)) }))
+  const playable = TYPE_IDS.filter(type => !(U.roleOf(type) === 'mortar' && !require('./version').mortarOn()));
+  const items = playable.map(type => ({ type, cost: price(type), room: Math.min(room, cap(type)) }))
     .filter(item => Number.isFinite(item.cost) && item.cost > 0 && funds >= item.cost && item.room > 0)
     .sort((a, b) => b.cost - a.cost || TYPE_IDS.indexOf(a.type) - TYPE_IDS.indexOf(b.type));
   if (!items.length) return 'none';
-  return items.map(item => `${CODE_BY_TYPE[item.type]}${item.cost}x${Math.min(item.room, Math.floor(funds / item.cost))}`).join(' ');
+  const fitFn = typeof fitOf === 'function' ? fitOf : (() => Infinity);
+  return items.map(item => {
+    const n = Math.min(item.room, Math.floor(funds / item.cost));
+    const fit = Math.max(0, Math.floor(fitFn(item.type)));
+    return `${CODE_BY_TYPE[item.type]}${item.cost}x${n}${fit < n ? `(${fit}fit)` : ''}`;
+  }).join(' ');
 }
 
 /**
@@ -97,9 +118,15 @@ function canBuyCodes(bank, rosterTotal, reserveTotal, priceOf, roomOf) {
  * shot, was shot or healed in the last 2 s), then the unit's radio order if any (`>z5`, `<z4`, `>M1`).
  * `R1@z4 R2@z5! T3@z5*! M1@z5`. `none` when the field is empty.
  */
-function formatUnitTokens(units) {
+function formatUnitTokens(units, stances = 'all') {
   if (!units || !units.length) return 'none';
-  return units.map(u => `${u.tag}@z${u.zone}${u.hurt ? '*' : ''}${u.combat ? '!' : ''}${u.order || ''}`).join(' ');
+  // Stance letter in brackets after the zone (`T2@z4[C]`). stances 'all' shows every unit's, 'diff' only the
+  // ones that differ from their type's default (the shrink step), 'none' none.
+  // [+] while the unit is walking to its field hospital or healing there (docs/FIELD-HOSPITAL.md).
+  // It replaces the stance letter for that token, and the shrink step keeps it. HOLD stays [H].
+  // Absent when the flag is off.
+  const st = u => u.hospital ? '[+]' : (!u.stance || stances === 'none' || (stances === 'diff' && u.stanceDefault)) ? '' : `[${ST.LETTER[u.stance] || '?'}]`;
+  return units.map(u => `${u.tag}@z${u.zone}${st(u)}${u.hurt ? '*' : ''}${u.combat ? '!' : ''}${u.order || ''}`).join(' ');
 }
 
 /** Their field units grouped by zone and type: `2R@z5 M@z6 T@z7` (a count only when above 1). `none` when empty. */
@@ -115,6 +142,21 @@ function formatFights(fights, usTag, themTag) {
 }
 
 /**
+ * Field hospitals, ours first. `hosp G120 E-60 en G:R1,T2 E:2R`.
+ * HP is an integer while it stands. Down is `-` plus seconds left on the rebuild timer.
+ * `-0` means the timer is done and the 40 CR rebuild has not been paid yet.
+ * `en` is units retreating or healing: our IDs, their counts (no enemy IDs). `-` when nobody.
+ */
+function formatHospital(h) {
+  if (!h) return '';
+  const hp = (alive, v, rb) => alive ? String(Math.max(0, v | 0)) : `-${Math.max(0, rb | 0)}`;
+  const en = list => list && list.length ? list.join(',') : '-';
+  const us = h.usTag || 'G';
+  const them = h.themTag || 'E';
+  return `hosp ${us}${hp(h.usAlive, h.usHp, h.usRebuild)} ${them}${hp(h.themAlive, h.themHp, h.themRebuild)} en ${us}:${en(h.usEn)} ${them}:${en(h.themEn)}`;
+}
+
+/**
  * One v2 report line. Delta, situation, zone totals, income and can-buy lead.
  * Our reserve and field follow. Their base is last. Field sections are dropped before the note when the line would pass 200 characters.
  * view: { t, event, delta, situation, zones ('5/2' or '4/3 c1'), income, canBuy, us:{hp,bank,reserve,field,hurt,standing?}, them:{tag,hp,field}, note? }
@@ -124,19 +166,32 @@ function formatReport(view) {
   const them = view.them || {};
   const tag = them.tag || 'E';
   const head = [
-    `v${PROTOCOL_VERSION} T${view.t} ${view.event}`,
+    `v${view.version || PROTOCOL_VERSION} T${view.t} ${view.event}`,
     view.delta || 'no change',
     view.situation || 'even',
     `z ${view.zones || '0/0'}`,
     view.income || 'income: 0 CR, need 1 more zone',
     `can buy: ${view.canBuy || 'none'}`,
   ];
+  // cmdr: the owner's commander notes (docs/COMMANDER-CHAT.md). Part of head, so no shrink step ever drops it.
+  if (Array.isArray(view.cmdr) && view.cmdr.length) head.push(require('./cmdr').formatCmdr(view.cmdr));
+  // hosp: both hospitals, ours first, then who is retreating or healing. Part of head so a shrink never drops it.
+  // Absent unless FIELD_HOSPITAL=1, so a flag-off line is unchanged. `G120` is HP; `G-60` is down, 60s to rebuild; `G-0` is waiting on the 40 CR.
+  if (view.hospital) head.push(formatHospital(view.hospital));
   // b bank, h hurt, hp our base, f field. Short so the draft note still fits in 200 characters.
   // Standing orders (FOCUS, AUTOBUY) ride at the end of res: `focus M auto T r20`. Absent when none is set.
   const standing = us.standing ? ` ${us.standing}` : '';
   // act <field>/<cap>: our units counting toward the active cap (drones included). Absent with no cap.
   const act = us.cap > 0 ? ` act ${us.active | 0}/${us.cap | 0}` : '';
-  const res = `res ${formatCounts(us.reserve)} b${us.bank | 0} h${us.hurt | 0} hp${us.hp | 0}${act}${standing}`;
+  // tur: both base turrets' HP, ours first: `tur G120 E80`; `-` once one is down. Absent with turrets off.
+  const turTok = v => (v == null ? '-' : String(v | 0));
+  const tur = us.turret !== undefined || them.turret !== undefined
+    ? ` tur ${us.tag || (tag === 'E' ? 'G' : 'E')}${turTok(us.turret)} ${tag}${turTok(them.turret)}` : '';
+  // gun / dep (v6, TOWERS=1): both gun towers' and depots' HP, ours first, like tur: `gun G100 E-`, `dep G160 E160`. `-` = down.
+  const usTag = us.tag || (tag === 'E' ? 'G' : 'E');
+  const tower = (name, a, b) => (a !== undefined || b !== undefined ? ` ${name} ${usTag}${turTok(a)} ${tag}${turTok(b)}` : '');
+  const towers = tower('gun', us.gun, them.gun) + tower('dep', us.depot, them.depot) + tower('xg', us.xgun, them.xgun) + tower('rng', us.rng, them.rng); // rng = seconds of range boost left (BUY RANGE on only); // xg = bought towers alive, only with TOWER_BUY on
+  const res = `res ${formatCounts(us.reserve)} b${us.bank | 0} h${us.hurt | 0} hp${us.hp | 0}${tur}${towers}${act}${standing}`;
   const field = `f ${formatCounts(us.field)}`;
   const foe = `${tag} ${them.hp | 0} f ${formatCounts(them.field)}`;
   const foeHp = `${tag} ${them.hp | 0}`;
@@ -144,15 +199,19 @@ function formatReport(view) {
   const noted = note ? `note: ${note}` : '';
   // Unit IDs (us.units), their zones (them.groups) and the fight list are given by the arena.
   // A view without them (older callers) keeps the plain counts.
-  const ids = Array.isArray(us.units) ? `f ${formatUnitTokens(us.units)}` : field;
+  const ids = Array.isArray(us.units) ? `f ${formatUnitTokens(us.units, 'diff')}` : field;
+  // Every unit's stance letter first; the shrink order then keeps only the non-default ones.
+  const idsAll = Array.isArray(us.units) ? `f ${formatUnitTokens(us.units, 'all')}` : field;
   const foeZones = Array.isArray(them.groups) ? `${tag} ${them.hp | 0} f ${formatGroupTokens(them.groups)}` : foe;
   const fight = formatFights(view.fights, us.tag || (tag === 'E' ? 'G' : 'E'), tag);
   const rich = noted ? [
+    [...head, res, idsAll, fight, foeZones, noted],
     [...head, res, ids, fight, foeZones, noted],
     [...head, res, ids, fight, foe, noted],
     [...head, res, ids, fight, foeHp, noted],
     [...head, res, field, fight, foeHp, noted],
   ] : [
+    [...head, res, idsAll, fight, foeZones],
     [...head, res, ids, fight, foeZones],
     [...head, res, ids, fight, foe],
     [...head, res, ids, fight, foeHp],
@@ -191,7 +250,12 @@ function formatReport(view) {
  */
 function standingText(focus, auto, autoState, scope) {
   const parts = [];
-  if (focus && CODE_BY_TYPE[focus]) {
+  if (focus === 'hospital') parts.push('focus H');
+  else if (focus === 'turret') parts.push('focus TUR');
+  else if (focus === 'gun') parts.push('focus GUN');
+  else if (focus === 'depot') parts.push('focus DEP');
+  else if (focus === 'post') parts.push('focus POST');
+  else if (focus && CODE_BY_TYPE[focus]) {
     // A scoped FOCUS adds its units and zone: `focus M R1,R2 z6`.
     let t = `focus ${CODE_BY_TYPE[focus]}`;
     if (scope && scope.tags) t += ` ${scope.tags.length ? scope.tags.join(',') : 'none'}`;
@@ -242,13 +306,13 @@ function parseUnitSel(tok) {
   if (tok === 'ALL') return { all: true };
   let m = /^([A-Z])(\d+)$/.exec(tok);
   if (m) {
-    const type = TYPE_BY_CODE[m[1]];
+    const type = orderType(m[1]);
     if (!type || +m[2] < 1) return { error: `unknown unit ${tok}` };
     return { id: tok, type, n: +m[2] };
   }
   m = /^(\d*)([A-Z])$/.exec(tok);
   if (m) {
-    const type = TYPE_BY_CODE[m[2]];
+    const type = orderType(m[2]);
     if (!type) return { error: `unknown unit ${tok}` };
     const count = m[1] ? +m[1] : null;
     if (count === 0 || count > ROSTER_LIMIT) return { error: `bad count ${tok}` };
@@ -279,6 +343,10 @@ function parseUnitSels(tokens) {
 function parseOrder(raw) {
   const original = String(raw == null ? '' : raw).trim();
   if (!original) return { skip: true };
+  // ACK <id> [NEG] <text>: the bot acknowledges a commander note. Not an order (no order slot, no act cap).
+  const ackLine = original.match(/^ack\s+(c\d{1,6})(?:\s+([\s\S]*))?$/i);
+  if (ackLine) return { ack: { id: ackLine[1].toLowerCase(), rest: ackLine[2] || '' } };
+  if (/^ack\b/i.test(original)) return { ack: { id: '', rest: '' } };
   const whyLine = original.match(/^why(?:\s+([\s\S]*))?$/i);
   if (whyLine) {
     const why = sanitizeWhy(whyLine[1] || '');
@@ -289,8 +357,13 @@ function parseOrder(raw) {
   const line = original.replace(/\s+/g, ' ').toUpperCase().replace(/(^| )Z(\d+)(?= |$)/g, '$1z$2');
   if (!line) return { skip: true };
   const parts = line.replace(/(^| )z(\d+)(?= |$)/g, '$1Z$2').split(' ');
-  const op = parts[0];
-  const rest = parts.slice(1);
+  let op = parts[0];
+  let rest = parts.slice(1);
+  // MOVE_ALL <zone> is MOVE ALL <zone> (comm spec v1.1 alias).
+  if (op === 'MOVE_ALL') {
+    if (rest.length !== 1) return { line, error: 'like MOVE_ALL z8' };
+    op = 'MOVE'; rest = ['ALL', rest[0]];
+  }
   if (op === 'HOLD' || op === 'BANK') {
     if (rest.length) return { line, error: `${op} takes no argument` };
     return { line, op };
@@ -302,15 +375,27 @@ function parseOrder(raw) {
     if (rest.length > ROSTER_LIMIT) return { line, error: `at most ${ROSTER_LIMIT}` };
     const types = [];
     for (const code of rest) {
-      const type = TYPE_BY_CODE[code];
+      const type = orderType(code);
       if (!type) return { line, error: `unknown unit ${code}` };
       types.push(type);
     }
     return { line, op, types };
   }
+  if (op === 'BUY' && rest[0] === 'RANGE') { // BUY RANGE [TOWER|TURRET|ALL]: a timed range boost (RANGE_BUY on; `unknown unit RANGE` otherwise)
+    if (rest.length > 2) return { line, error: 'like BUY RANGE, BUY RANGE TOWER or BUY RANGE TURRET' };
+    const w = rest.length === 2 ? { TOWER: 'gun', GUN: 'gun', TURRET: 'turret', ALL: 'all' }[rest[1]] : 'all';
+    if (!w) return { line, error: 'BUY RANGE takes TOWER, TURRET or ALL' };
+    return { line: `BUY RANGE${w === 'all' ? '' : w === 'gun' ? ' TOWER' : ' TURRET'}`, op, range: true, what: w };
+  }
+  if (op === 'BUY' && rest[0] === 'TOWER') { // BUY TOWER [z<n>]: a bought gun tower (TOWER_BUY on; refused as `unknown unit TOWER` otherwise)
+    if (rest.length > 2) return { line, error: 'like BUY TOWER or BUY TOWER z4' };
+    const zm = rest.length === 2 ? /^z([1-8])$/i.exec(rest[1]) : null;
+    if (rest.length === 2 && !zm) return { line, error: 'zone z1 to z8, like BUY TOWER z4' };
+    return { line: zm ? `BUY TOWER z${zm[1]}` : 'BUY TOWER', op, tower: true, zone: zm ? +zm[1] : null };
+  }
   if (op === 'BUY') {
     if (rest.length !== 1) return { line, error: 'one unit, like BUY M' };
-    const type = TYPE_BY_CODE[rest[0]];
+    const type = orderType(rest[0]);
     if (!type) return { line, error: `unknown unit ${rest[0]}` };
     return { line, op, type };
   }
@@ -322,7 +407,25 @@ function parseOrder(raw) {
       if (rest.length > 1) return { line, error: 'FOCUS NONE takes nothing else' };
       return { line: 'FOCUS NONE', op, type: null };
     }
-    const type = TYPE_BY_CODE[rest[0]];
+    // FOCUS TURRET: their base turret first whenever it is in range.
+    if (rest[0] === 'TURRET') {
+      if (rest.length > 1) return { line, error: 'FOCUS TURRET takes nothing else' };
+      return { line: 'FOCUS TURRET', op, type: 'turret' };
+    }
+    // FOCUS GUN / FOCUS DEPOT (v6, TOWERS=1): their gun tower or depot first whenever in reach; units near it close on it.
+    // The match refuses them with `unknown unit` while TOWERS is off, the same reply the seat gave before they existed.
+    if (rest[0] === 'GUN' || rest[0] === 'DEPOT' || rest[0] === 'POST') {
+      if (rest.length > 1) return { line, error: `FOCUS ${rest[0]} takes nothing else` };
+      return { line: `FOCUS ${rest[0]}`, op, type: rest[0].toLowerCase() };
+    }
+    // FOCUS H: their field hospital. Recognized only while FIELD_HOSPITAL=1; otherwise it is an unknown code,
+    // the same reply the seat gave before the order existed.
+    if (rest[0] === 'H' || rest[0] === 'HOSPITAL') {
+      if (!require('./version').fieldHospital()) return { line, error: `unknown unit ${rest[0]}` };
+      if (rest.length > 1) return { line, error: 'FOCUS H takes nothing else' };
+      return { line: 'FOCUS H', op, type: 'hospital' };
+    }
+    const type = orderType(rest[0]);
     if (!type) return { line, error: `unknown unit ${rest[0]}` };
     if (rest.length === 1) return { line, op, type };
     let more = rest.slice(1);
@@ -351,6 +454,17 @@ function parseOrder(raw) {
   }
   if (op === 'ASSIST') {
     if (rest.length < 1 || rest.length > 2) return { line, error: 'like ASSIST z5 or ASSIST z5 1' };
+    // ASSIST <unit ID> [radius]: help that unit, in whatever zone it is in when the order lands.
+    if (/^[A-Z]\d+$/.test(rest[0]) && !/^Z\d+$/.test(rest[0])) {
+      const sel = parseUnitSel(rest[0]);
+      if (sel.error) return { line, error: sel.error };
+      let radius = ASSIST_RADIUS_ORDER;
+      if (rest.length === 2) {
+        if (!/^\d+$/.test(rest[1]) || +rest[1] > ZONES - 1) return { line, error: `radius 0 to ${ZONES - 1}` };
+        radius = +rest[1];
+      }
+      return { line, op, assistId: sel.id, zone: null, radius, radio: true };
+    }
     const zone = parseZone(rest[0]);
     if (zone == null) return { line, error: `bad zone ${rest[0].toLowerCase()}, z1 to z${ZONES}` };
     let radius = ASSIST_RADIUS_ORDER;
@@ -365,11 +479,23 @@ function parseOrder(raw) {
     if (p.error) return { line, error: p.error };
     return { line, op, sels: p.sels, radio: true };
   }
+  // STANCE <units> <stance>: HOLD CHARGE KITE ESCORT RUN (or DEFAULT). Standing until the next STANCE.
+  // Units like the radio orders (ID, code, 2R, ALL). Drones have no stance.
+  if (op === 'STANCE') {
+    if (rest.length < 2) return { line, error: 'like STANCE R2 KITE or STANCE T CHARGE' };
+    const stance = ST.parseStance(rest[rest.length - 1]);
+    if (!stance) return { line, error: `stance ${ST.STANCES.join(' ')} or DEFAULT` };
+    const p = parseUnitSels(rest.slice(0, -1));
+    if (p.error) return { line, error: p.error };
+    if (p.sels.every(sel => sel.type && !ST.hasStance(sel.type))) return { line, error: 'drones have no stance' };
+    const norm = `STANCE ${rest.slice(0, -1).join(' ')} ${stance}`;
+    return { line: norm, op, sels: p.sels, stance };
+  }
   // AUTOBUY <code> [RESERVE <n>] | AUTOBUY OFF (NONE is the same): standing buy-and-deploy rule.
   if (op === 'AUTOBUY') {
     if (rest.length === 1 && (rest[0] === 'OFF' || rest[0] === 'NONE')) return { line: 'AUTOBUY OFF', op, type: null };
     if (rest.length !== 1 && rest.length !== 3) return { line, error: 'like AUTOBUY T, AUTOBUY T RESERVE 20, or AUTOBUY OFF' };
-    const type = TYPE_BY_CODE[rest[0]];
+    const type = orderType(rest[0]);
     if (!type) return { line, error: `unknown unit ${rest[0]}` };
     let reserve = 0;
     if (rest.length === 3) {
@@ -382,13 +508,39 @@ function parseOrder(raw) {
   return { line, error: 'unknown order' };
 }
 
+/**
+ * Named error code for an ERR reason (comm spec v1.1). Additive: the ERR line text is unchanged;
+ * POST /api/seat/orders also returns errors: [{ line, code, reason }].
+ */
+const ERR_CODES = [
+  [/bad zone|zone .*z1 to/, 'invalid_zone'],
+  [/not enough|credits|cannot cover|need \d+ CR|CR\b/i, 'insufficient_credits'],
+  [/reserve (is )?empty|none in reserve|no .* in reserve|nothing in reserve/i, 'reserve_empty'],
+  [/active cap|cap reached|field is full|slots?|cap \d+ active/i, 'slot_full'],
+  [/unit .+ is dead|\bis dead\b/i, 'unit_dead'],
+  [/unknown unit|not found|no unit|no such/i, 'unknown_unit'],
+  [/not hurt|none hurt/, 'not_hurt'],
+  [/no enemy/, 'no_enemy'],
+  [/no units within/, 'none_in_range'],
+  [/match over/, 'match_over'],
+  [/queue full|at most/, 'too_many'],
+  [/max_alive|max per buy|cooldown|maxed|no buys left/i, 'limit'],
+  [/no stance|stance HOLD/, 'bad_order'],
+  [/unknown order|takes no|like |one unit|need |name units|bad count|radius|reserve 0/, 'bad_order'],
+];
+function errCode(reason) {
+  const r = String(reason || '');
+  for (const [re, code] of ERR_CODES) if (re.test(r)) return code;
+  return 'rejected';
+}
+
 function reply(parsed, reason) {
   return reason ? `ERR ${parsed.line}: ${reason}` : `OK ${parsed.line}`;
 }
 
 /** Territory price of a queue type, or null when the queue has nothing left to buy. */
 function nextBuyOf(queue, bought) {
-  if (bought >= MAX_BUYS) return null;
+  if (bought >= CONSTANTS.MAX_BUYS) return null;
   const type = queue && queue[bought];
   if (!CODE_BY_TYPE[type]) return null;
   return { type, code: CODE_BY_TYPE[type], cost: FIELD_COST[type] };
@@ -490,10 +642,11 @@ function postReportWebhook(url, body, log = console.log, opts = {}) {
 }
 
 module.exports = {
-  PROTOCOL_VERSION, DEBOUNCE_S, HEARTBEAT_S, REPORT_CHAR_BUDGET, WEBHOOK_TIMEOUT_MS, WAKE_MIN_MS,
+  errCode,
+  PROTOCOL_VERSION, PROTOCOL_VERSION_TOWERS, DEBOUNCE_S, HEARTBEAT_S, REPORT_CHAR_BUDGET, WEBHOOK_TIMEOUT_MS, WAKE_MIN_MS,
   CODE_BY_TYPE, TYPE_BY_CODE, WHY_MAX,
   parseZone, parseUnitSel, parseUnitSels,
-  formatCounts, formatReport, formatUnitTokens, formatGroupTokens, formatFights, situationTag, situationText, canBuyCodes, parseOrder, reply, nextBuyOf, cleanNote, teamTag,
+  formatCounts, formatReport, formatUnitTokens, formatGroupTokens, formatFights, formatHospital, situationTag, situationText, canBuyCodes, parseOrder, reply, nextBuyOf, cleanNote, teamTag,
   sanitizeWhy, reasonFromLabel, standingText, AUTOBUY_RESERVE_MAX,
   quantile, latencyStats, decideSummary,
   readEnvNumber, shouldPostWake, protocolLogRecord, postReportWebhook,

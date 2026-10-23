@@ -8,10 +8,18 @@
 //   node tools/warrior-seat.js arsenal [guard=3 scout=1 | more <type> | reset]   show / set the pre-match drones
 //   node tools/warrior-seat.js plan [balanced|pressure|armor|counter]   AgRTS style label (next match; this match if it has not stepped)
 //   node tools/warrior-seat.js opening --scout N --rifle N --tank N --medic N [--<id> N] [--queue a,b] [--spend]   AgRTS arsenal and buy queue (ids from units.csv)
+//   node tools/warrior-seat.js fight --propose <plan> [--rifles n --tanks n --medics n --scouts n --drones n --mortars n --hold z3|z4 --push early|normal|late --medic none|one_early|two_by_t60 --note "..."]   arm with your plan proposal; the owner locks it on the card (docs/STRATEGY-CARD.md). `propose <plan> ...` re-proposes while it waits
+//   node tools/warrior-seat.js audit [--match n] [--full] [--json] [--summary]   what you approved vs what ran (plan audit trail, docs/PLAN-AUDIT.md); orders/step take --why <tag>
+//   node tools/warrior-seat.js strategy [--wait [s]] [--json]   the owner's pre-match strategy card as key=value lines (eval-able; strategy_note is single-quoted).
+//     --wait blocks until the owner approves the plan (or nothing is holding the match); opening --from-strategy posts its opening (skipped if the arena already did)
 //   node tools/warrior-seat.js decision <type> [type...] | hold   AgRTS deploy wave (type ids from units.csv)
-//   node tools/warrior-seat.js orders "DEPLOY R R S" "BUY M" [--report id]   at most 3 lines: BUY DEPLOY HOLD BANK FOCUS AUTOBUY MOVE ASSIST FALLBACK CLEAR (+ one WHY)
+//   node tools/warrior-seat.js orders "DEPLOY R R S" "BUY M" [--report id]   at most 3 lines: BUY DEPLOY HOLD BANK FOCUS AUTOBUY MOVE MOVE_ALL ASSIST FALLBACK CLEAR (+ one WHY)
+//   ASSIST R2 helps unit R2 where it stands; MOVE_ALL z8 = MOVE ALL z8; a rejected order's JSON reply carries errors:[{line,code,reason}]
 //   node tools/warrior-seat.js step --report id [--timeout s] [--json] ["ORDER LINE" ...]   post those lines (the reply includes a v2 state line), then the next report
 //   node tools/warrior-seat.js next [--since id] [--timeout s] [--json]   next report via the relay when configured; timeout retries; END stops
+//   node tools/warrior-seat.js owner-link [--rotate]   the owner's private watch link for commander chat (<watch>#ok=<key>; keep it
+//   private). --rotate makes a new key: old owner links stop working. A report's `cmdr c3 "..."` is a commander note;
+//   answer it with an `ACK c3 <short paraphrase>` (or `ACK c3 NEG <reason>`) order line, which uses no order slot.
 //   node tools/warrior-seat.js latency [--last N]   decide-time trend from logs/decide-latency.jsonl
 //   node tools/warrior-seat.js card [--out f.png]         make the loadout card PNG (prints absolute png path, file:// URL, buttons)
 //   node tools/warrior-seat.js fight                      start a paused / held arena (solo: first match, and after each debrief)
@@ -35,7 +43,7 @@
 //   --side ember (or WARRIOR_SIDE=ember) on any command: the Ember seat, token in secrets/warrior-seat-ember.json. Testing
 //   only, on an arena started with GBW_TWO_SEATS=1. Without it everything is the Green seat, as before.
 const fs = require('fs'), path = require('path');
-const HELP_LINES = 36; // header lines printed by "help"
+const HELP_LINES = 38; // header lines printed by "help"
 const sleep = ms => new Promise(z => setTimeout(z, ms));
 const ROOT = path.join(__dirname, '..');
 const argv = process.argv.slice(2), cmd = argv[0];
@@ -212,6 +220,32 @@ function pvpSeatView() {
 const pvpSide = v => (v.role === 'host' ? 'Green/host' : 'Ember/guest');
 const pvpReason = v => v.status === 'cancelled' ? `cancelled by ${v.cancelledBy === 'you' ? 'us' : v.cancelledBy || 'someone'}${v.reason ? ` (${v.reason})` : ''}` : `${v.status}${v.reason ? ` (${v.reason})` : ''}`;
 
+// The proposal flags shared by `fight --propose <plan>` and `propose <plan>`: the plan id plus any dial that differs from the preset.
+function proposalFromArgs(planArg) {
+  const plan = planArg || opt('propose');
+  if (!plan || String(plan).startsWith('--')) die('--propose needs a plan: balanced, aggressive or defensive (then any of --rifles n --tanks n --medics n --scouts n --drones n --mortars n --hold z3|z4 --push early|normal|late --medic none|one_early|two_by_t60 --note "...")');
+  const p = { plan: String(plan).toLowerCase() };
+  for (const k of ['rifles', 'tanks', 'medics', 'scouts', 'drones', 'mortars']) { const v = opt(k); if (v == null) continue; if (!/^\d+$/.test(String(v))) die(`--${k} must be a whole number, 0 or more`); p[k] = +v; }
+  for (const k of ['hold', 'push', 'medic']) { const v = opt(k); if (v != null) p[k] = String(v).toLowerCase(); }
+  const n = opt('note'); if (n != null) p.note = String(n);
+  return p;
+}
+function printProposal(pr, sent) {
+  if (pr.accepted === false) { console.error(`warning: the proposal was not used: ${pr.note || 'no strategy card'}`); return; }
+  if (pr.ok === false) { console.error(`warning: the proposal was not accepted: ${pr.error || pr.status}`); return; }
+  console.log(`Proposed ${pr.plan} [${pr.hash}] for match ${pr.match}: the owner's card opens showing it, labelled "Proposed by your agent". ${pr.note ? pr.note[0].toUpperCase() + pr.note.slice(1) + '.' : ''}`);
+}
+// The strategy card's view for this seat (GET /api/seat/strategy), or Balanced defaults when the arena has none (older arena, PvP guest seat).
+async function strategyView() {
+  const SG = require('../src/agrts/strategy');
+  const dflt = { strategy: SG.fromPlan('balanced'), set: false, approved: false, openingApplied: false, card: false, assaultT: SG.assaultT(360) };
+  if (USE_PVP_SEAT) return dflt;
+  const r = await apiSoft('/api/seat/strategy');
+  if (!r || r.code !== 200 || !r.j || !r.j.ok || !r.j.strategy) return dflt;
+  const v = SG.validate(r.j.strategy, SG.envFromView(r.j));
+  if (!v.ok) console.error(`warrior-seat: the arena's strategy did not validate (${v.error}); using Balanced`);   // never a silent default
+  return { ...dflt, ...r.j, strategy: v.ok ? v.strategy : dflt.strategy, assaultT: Number.isFinite(+r.j.assaultT) ? +r.j.assaultT : dflt.assaultT };
+}
 const read = f => { try { return fs.readFileSync(path.resolve(f), 'utf8'); } catch (e) { die(`cannot read ${f}`); } };
 (async () => {
   switch (cmd) {
@@ -264,6 +298,14 @@ const read = f => { try { return fs.readFileSync(path.resolve(f), 'utf8'); } cat
       const r = await api('/api/seat/plan', { style }); show(r.j); process.exit(r.code === 200 ? 0 : 1);
     }
     case 'opening': {
+      if (argv.includes('--from-strategy')) {   // the opening of the strategy card: rifles / tanks / medics (+ queue) from the plan
+        const SG = require('../src/agrts/strategy');
+        const v = await strategyView();
+        const op = SG.opening(v.strategy);
+        if (v.openingApplied && !argv.includes('--force')) { show({ ok: true, skipped: 'the arena already posted this opening when the plan was approved', plan: v.strategy.plan, opening: op }); process.exit(0); }
+        const r = USE_PVP_SEAT ? await seatCall('/api/seat/opening', '/seat/opening', op, 15000) : await api('/api/seat/opening', op);
+        show({ ...r.j, plan: v.strategy.plan, fromStrategy: true }); process.exit(r.code === 200 ? 0 : 1);
+      }
       // Any --<unit id> N flag (ids are the id column of units.csv on the arena); the arena checks the ids.
       const keys = [...new Set(['scout', 'rifle', 'tank', 'medic', ...argv.slice(1).filter((a, i, l) => /^--[a-z][a-z0-9_]*$/.test(a) && /^\d+$/.test(String(l[i + 1]))).map(a => a.slice(2))])].filter(k => k !== 'queue');
       const num = k => {
@@ -280,7 +322,48 @@ const read = f => { try { return fs.readFileSync(path.resolve(f), 'utf8'); } cat
       const body = { arsenal, queue, spend: argv.includes('--spend') };
       // a PvP guest's opening goes to the host arena through the relay (before START), checked there like a local one
       const r = USE_PVP_SEAT ? await seatCall('/api/seat/opening', '/seat/opening', body, 15000) : await api('/api/seat/opening', body);
+      if (r.j && r.j.warning) console.error('warning: ' + r.j.warning);
       show(r.j); process.exit(r.code === 200 ? 0 : 1);
+    }
+    case 'audit': {
+      // What you approved vs what ran: the plan audit trail of a match (state/audit/<boot>-m<n>.jsonl on the arena; docs/PLAN-AUDIT.md).
+      //   audit [--match n] [--full] [--json] [--summary]
+      const AU = require('../src/agrts/audit');
+      const mi = opt('match'), want = mi != null && /^\d+$/.test(String(mi)) ? +mi : null;
+      let data = null;
+      if (!USE_PVP_SEAT) {
+        const r = await apiSoft('/api/seat/audit' + (want ? `?match=${want}` : '')).catch(() => null);
+        if (r && r.code === 200 && r.j && r.j.ok) data = r.j;
+        else if (r && r.code === 404) { console.error(`audit: ${r.j && r.j.error ? r.j.error : 'no trail'}${r.j && r.j.available ? ' (have: ' + r.j.available.map(x => 'm' + x.match + '@' + x.boot).join(', ') + ')' : ''}`); process.exit(1); }
+      }
+      if (!data) {   // arena not reachable from here: read this checkout's files (the arena and this tool share a checkout in a solo setup)
+        const dir = path.join(ROOT, 'state', 'audit');
+        const ls = AU.list(dir), pick = want ? ls.find(x => x.match === want) : ls[0];
+        if (!pick) { console.error('audit: no audit trail found (is the arena running, and is this its checkout?)'); process.exit(1); }
+        const records = AU.parseFile(pick.file);
+        data = { ok: true, match: pick.match, boot: pick.boot, chain: AU.verify(records), summary: AU.summarize(records), records };
+      }
+      if (argv.includes('--json')) { show(data); process.exit(0); }
+      const out = [];
+      out.push(`Plan audit, match ${data.match} (arena start ${data.boot}), ${data.records.length} records, chain ${data.chain.ok ? 'intact' : 'BROKEN at #' + data.chain.bad}`);
+      out.push('', ...data.summary.lines, '');
+      if (data.summary.checks.length) { out.push('Checks:'); for (const c of data.summary.checks) out.push(`  ${c.ok === true ? 'ok  ' : c.ok === false ? 'DIFF' : ' -  '} ${c.text}`); out.push(''); }
+      if (!argv.includes('--summary')) { out.push('Timeline:'); out.push(...AU.timeline(data.records, argv.includes('--full')).map(l => '  ' + l)); }
+      console.log(out.join('\n'));
+      process.exit(0);
+    }
+    case 'strategy': {
+      // The Green seat's strategy card choices. An arena without the card (or no choice yet) gives Balanced with strategy_set=0, so a loop can eval this blindly.
+      const SG = require('../src/agrts/strategy');
+      const wi = argv.indexOf('--wait');
+      const waitS = wi > 0 ? (/^\d+$/.test(String(argv[wi + 1])) ? +argv[wi + 1] : 600) : 0;
+      let v = await strategyView();
+      for (const t0 = Date.now(); waitS > 0 && v.card && !v.approved && Date.now() - t0 < waitS * 1000;) { await sleep(1000); v = await strategyView(); }
+      if (argv.includes('--json')) { show({ ok: true, ...v }); process.exit(0); }
+      const kvText = SG.toKv(v.strategy, { set: v.set, approved: v.approved, applied: v.openingApplied, overridden: false, assaultT: v.assaultT, env: SG.envFromView(v), source: v.source, hash: v.hash, proposed: !!v.proposal, deviations: v.deviations });
+      process.stdout.write(kvText);
+      if (!USE_PVP_SEAT && !argv.includes('--no-audit')) await apiSoft('/api/seat/audit', { ev: 'strategy_out', kv: kvText, wait: waitS > 0 });   // the plan audit trail records what the loop was given (best effort, short)
+      process.exit(0);
     }
     case 'decision': {
       const args = argv.slice(1).filter(a => !a.startsWith('--'));
@@ -295,13 +378,15 @@ const read = f => { try { return fs.readFileSync(path.resolve(f), 'utf8'); } cat
       const lines = [];
       for (let i = 1; i < argv.length; i++) {
         const a = argv[i];
-        if (a === '--report') { i += 1; continue; }
+        if (a === '--report' || a === '--why') { i += 1; continue; }
         if (a.startsWith('--')) continue;
         lines.push(a);
       }
-      if (!lines.length) die('usage: orders "DEPLOY R R S" "BUY M" [--report id]   (at most 3 lines: BUY <code>, DEPLOY <codes>|ALL, HOLD, BANK, FOCUS <code> [units] [zone]|NONE, AUTOBUY <code> [RESERVE n]|OFF, MOVE <units> <zone>, ASSIST <zone> [radius], FALLBACK <units>, CLEAR <units>; units: R2, R, 2R or ALL; zones z1-z8; plus one WHY <text>)');
+      if (!lines.length) die('usage: orders "DEPLOY R R S" "BUY M" [--report id]   (at most 3 lines: BUY <code>, DEPLOY <codes>|ALL, HOLD, BANK, FOCUS <code> [units] [zone]|NONE, AUTOBUY <code> [RESERVE n]|OFF, MOVE <units> <zone>, MOVE_ALL <zone>, ASSIST <zone>|<unit ID> [radius], FALLBACK <units>, CLEAR <units>; units: R2, R, 2R or ALL; zones z1-z8; plus one WHY <text>)');
       const body = { lines };
       if (report != null && report !== '' && Number.isFinite(+report)) body.reportId = +report;
+      const why = opt('why') || process.env.GBW_WHY || '';   // reason tag for the audit trail, e.g. --why push-ahead
+      if (why) body.why = String(why).slice(0, 48);
       const r = await seatCall('/api/seat/orders', '/seat/orders', body);
       const results = r.j && Array.isArray(r.j.results) ? r.j.results : null;
       if (!results) { show(r.j); process.exit(r.code === 200 ? 0 : 1); }
@@ -318,14 +403,15 @@ const read = f => { try { return fs.readFileSync(path.resolve(f), 'utf8'); } cat
       const lines = [];
       for (let i = 1; i < argv.length; i++) {
         const a = argv[i];
-        if (a === '--report' || a === '--timeout') { i += 1; continue; }
+        if (a === '--report' || a === '--timeout' || a === '--why') { i += 1; continue; }
         if (a === '--json' || a.startsWith('--')) continue;
         lines.push(a);
       }
       let orders = [];
       let stateLine = null;
       if (lines.length) {
-        const posted = await seatCall('/api/seat/orders', '/seat/orders', { lines, reportId: +report });
+        const stepWhy = opt('why') || process.env.GBW_WHY || '';
+        const posted = await seatCall('/api/seat/orders', '/seat/orders', { lines, reportId: +report, ...(stepWhy ? { why: String(stepWhy).slice(0, 48) } : {}) });
         const results = posted.j && Array.isArray(posted.j.results) ? posted.j.results : null;
         if (!results) { show(posted.j || { ok: false, error: 'no reply' }); process.exit(posted.code === 200 ? 0 : 1); }
         orders = results.length ? results : (posted.j.error ? [`ERR ${posted.j.error}`] : []);
@@ -388,11 +474,25 @@ const read = f => { try { return fs.readFileSync(path.resolve(f), 'utf8'); } cat
       const q = `?since=${encodeURIComponent(since != null ? since : '0')}&wait=${encodeURIComponent(wait)}`;
       const r = await seatCall('/api/seat/report' + q, '/seat/report' + q, null, (Math.max(0, +wait || 0) + 5) * 1000);
       if (r.code !== 200 || !r.j || r.j.ok === false) { show(r.j || { error: 'no reply' }); process.exit(1); }
-      if (argv.includes('--json')) { show(r.j); process.exit(0); }
+      if (argv.includes('--json')) {
+        const cm = /\| cmdr ((?:c\d+ "[^"]*" ?)+)/.exec(r.j.line || '');
+        if (cm) r.j.cmdr = [...cm[1].matchAll(/(c\d+) "([^"]*)"/g)].map(m => ({ id: m[1], text: m[2] }));
+        show(r.j); process.exit(0);
+      }
       if (r.j.fresh && r.j.line) { console.log(`${r.j.id} ${r.j.line}`); process.exit(0); }
       // READY and COUNTDOWN are keep-going. A poll that is not fresh yet is timeout, not a stop.
+      if (r.j.event === 'WAITING') { console.log(`timeout ${r.j.line}`); process.exit(0); }
       if (r.j.timeout || r.j.event === 'READY' || r.j.event === 'COUNTDOWN') { console.log('timeout'); process.exit(0); }
       console.log('no-match');
+      process.exit(0);
+    }
+    case 'owner-link': {
+      const rot = argv.includes('--rotate');
+      const r = await api(rot ? '/api/owner/rotate' : '/api/owner/link', rot ? {} : null);
+      if (r.code !== 200) { show(r.j); process.exit(1); }
+      if (argv.includes('--json')) { show(r.j); process.exit(0); }
+      console.log(r.j.link ? `owner link (private, opens commander chat on your watch page${r.j.gate ? '; carries the armed match\'s gate id, so opening it starts that match' : ''}): ${r.j.link}` : `no relay room: ${r.j.note}`);
+      if (rot) console.log('rotated: old owner links stop working');
       process.exit(0);
     }
     case 'arsenal': {
@@ -420,10 +520,17 @@ const read = f => { try { return fs.readFileSync(path.resolve(f), 'utf8'); } cat
       const st = (await api('/api/seat/info')).j;
       // pick up a label change before the match starts (quiet; never blocks the fight)
       if (st && (st.status === 'over' || st.tick === 0)) { const me = myLabel(); if (me && me.label !== st.name) { const n = await syncLabel(); if (n.ok) console.error(`note: renamed to ${n.name} (${n.base})`); } }
-      const r = await api('/api/seat/resume', {});
+      // fight --propose <plan> [--rifles n ...]: the plan contract. The proposal goes to the arena with the arming call, checked first (a bad one arms nothing).
+      const prop = argv.includes('--propose') ? proposalFromArgs() : null;
+      const r = await api('/api/seat/resume', prop ? { propose: prop } : {});
+      if (prop && r.code !== 200) { console.error(`fight --propose: ${(r.j && r.j.error) || 'the arena refused it (' + r.code + ')'}`); process.exit(1); }
+      if (prop && r.j && r.j.proposal) printProposal(r.j.proposal, prop);
       if (r.code === 200 && r.j && r.j.waiting) {
         console.log(`Match ${r.j.match} is armed and waiting for a viewer.`);
         if (r.j.watch) console.log(`Watch: ${r.j.watch}`);
+        // The match starts only for a page opened from THIS link (it carries this match's one-time gate id). Pages that were
+        // already open, and the plain Watch link above, only spectate. Send this exact link to the owner; it is new every match.
+        if (r.j.ownerLink) console.log(`Owner link (private, new for this match; opening it starts the match): ${r.j.ownerLink}`);
         return;
       }
       if (r.code === 200) return show({ ok: true, started: r.j.started, alreadyRunning: !r.j.started, match: r.j.match, status: r.j.status, pauseAfterMatch: r.j.pauseAfterMatch });
@@ -433,6 +540,16 @@ const read = f => { try { return fs.readFileSync(path.resolve(f), 'utf8'); } cat
       if (!st.paused) return show({ ok: true, alreadyRunning: true, match: st.match, tick: st.tick });
       const c = await api('/api/control', { action: 'resume' }, false);
       return show({ ok: c.code === 200, started: true, match: st.match });
+    }
+    case 'propose': {
+      // propose <plan> [--rifles n --tanks n --medics n --scouts n --drones n --mortars n --hold z3|z4 --push early|normal|late --medic none|one_early|two_by_t60 --note "..."]
+      // The agent's plan for the match that is waiting for the owner. The card opens showing it; nothing is locked until the owner presses APPROVE PLAN.
+      // A new proposal after a lock clears the lock (the owner approves again). To arm the next match with a proposal, use `fight --propose` instead.
+      if (!argv[1] || String(argv[1]).startsWith('--')) die('usage: propose <balanced|aggressive|defensive> [--rifles n ...] [--hold z3|z4] [--push early|normal|late] [--medic none|one_early|two_by_t60] [--note "..."]');
+      const body = proposalFromArgs(argv[1]);
+      const r = await api('/api/seat/propose', body);
+      if (r.code === 200 && r.j && r.j.ok) { printProposal({ ...r.j, status: 200 }, body); process.exit(0); }
+      console.error(`propose: ${(r.j && r.j.error) || 'refused (' + r.code + ')'}`); process.exit(1);
     }
     case 'wait': { // block until the match that is current NOW ends (tracked by match number, so an auto-started next match can't confuse it)
       const timeoutS = +(opt('timeout') || 600); if (!(timeoutS > 0)) die('--timeout must be a number of seconds');

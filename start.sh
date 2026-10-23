@@ -2,10 +2,11 @@
 # Start the GrokBotWar server in the background (nohup). Env: PORT (8787), HOST (0.0.0.0).
 # Default game is the 2-player AgRTS match (Green vs Ember, bots.agrts.json).
 # A server already on this port that is not that match is stopped and replaced.
+# Towers and Team HP are on by default (docs/TOWERS.md); TOWERS=0 ./start.sh or TOWERS=0 in state/arena.env plays the old rules.
 # Classic 4-team arena: GAME=classic ./start.sh
 cd "$(dirname "$0")"
 # Optional per-arena settings that survive plain restarts: state/arena.env (state/ is gitignored), one KEY=value per
-# line, e.g. GBW_PVP=1. A variable already set in the environment wins over the file.
+# line, e.g. GBW_PVP=0 (PvP is on by default). A variable already set in the environment wins over the file.
 if [ -f state/arena.env ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
@@ -56,7 +57,7 @@ PORT="$PORT" nohup node server.js >> logs/server.log 2>&1 &
 echo $! > logs/server.pid
 sleep 0.5
 if kill -0 "$(cat logs/server.pid)" 2>/dev/null; then
-  echo "started pid $(cat logs/server.pid): http://localhost:$PORT/ mode=${WANT} pvp=$([ "${GBW_PVP:-}" = 1 ] && echo on || echo off)"
+  echo "started pid $(cat logs/server.pid): http://localhost:$PORT/ mode=${WANT} pvp=$(case "${GBW_PVP:-1}" in 0|off|false|no) echo off;; *) echo on;; esac)"
 else
   echo "failed to start; see logs/server.log"; tail -20 logs/server.log; exit 1
 fi

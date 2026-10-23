@@ -7,12 +7,15 @@
 // Nothing here moves a unit or picks a target; MOVE, ASSIST, FOCUS, AUTOBUY, FALLBACK and
 // CLEAR do that in src/agrts/match.js exactly as they do for Green.
 //
+// Smart buying (src/agrts/red-buy.js, docs/RED-AI.md): when the match sets mem.buy = 'smart' (the range engine does) steps 1 and 5 below are replaced by one
+// plan from what the enemy fields (counter-picks, mix targets, waiting for the right unit, drones / mortar / medic rules); everything else is unchanged.
+//
 // What it does, in order of priority each window:
 //   1. DEPLOY whatever is in reserve (one army, no waves) into the free active slots (ACTIVE_CAP; none
 //      posted while the field is full), Drones excepted (see below). BUY M first when no medic is on
-//      the field, two or more allies are hurt and the bank covers it. Once AUTOBUY has used the
-//      6 buys, a manual BUY of our main unit when the bank covers it plus a medic (rule 11 of
-//      the warrior's table: manual BUY has no cap).
+//      the field, two or more allies are hurt and the bank covers it. Buys are unlimited by default
+//      (BUY_CAP unset), and one rule (match._buyRoom) caps every path: the buy cap, 24 living units
+//      and the per-type max_alive (2 Breakers).
 //   2. Group, then push together. Rally the army one zone in front of home (z6 for Ember),
 //      then advance it one zone at a time with MOVE ALL, only while the group is together (or none
 //      of their ground units is left on the field, so stragglers do not hold it back) and
@@ -20,9 +23,23 @@
 //      zones: CLEAR ALL, so the normal pick goes for the intruders. Their home zone is the last
 //      MOVE ALL: it walks every unit into range of their base, where it shoots.
 //   3. ASSIST a fight (both sides in a zone) where we are not ahead and have units 1 zone away.
-//   4. FOCUS their medics while any is on the field; with none, their breakers when 3+ are.
-//   5. AUTOBUY our plan's main unit, RESERVE one medic's price, so a medic buy stays affordable.
+//   4. FOCUS their field hospital while it is alive and a ground unit of ours can reach it
+//      (FIELD_HOSPITAL=1). Otherwise their medics while any is on the field; with none, their
+//      breakers when 3+ are.
+//   5. AUTOBUY our main unit: MAIN_BUY below (a Rifle). No RESERVE by default (HOLD_MEDIC_PRICE): the
+//      medic-for-our-hurt rule (1) buys a medic when two are hurt and none is alive, and holding a medic's
+//      price all match idled field slots.
 //   6. FALLBACK one badly hurt unit to our medic.
+// Towers (TOWERS=1, view.towers; nothing below changes without it, see towers.js):
+//   FOCUS ladder by where the army stands: H (their hospital) first, then GUN (their gun tower), then TURRET while their
+//   base turret stands and we are at their gate, then DEPOT (the base shield) once the turret is down.
+//   ASSIST also answers our own gun tower or depot under fire (hit in the last 5 s, 2+ of their ground units in its zone).
+//   Home-zone defence (CLEAR ALL) also covers the zone of our gun tower.
+//   The last 60 s: ahead on Team HP (then towers, then zones) the army holds the zone it is in; behind or level it marches on
+//   their weakest tower and FOCUSes it (their base when no tower is left).
+// Mortar (MORTAR on, view.mortar): the opening keeps one tube, paid for by dropping Scouts then
+// Rifles. A later window BUYs another while we have more tanks than tubes (at most two) and the
+// bank still covers a medic. The tube does not join the push: match.js holds it behind the tanks.
 // Drones (the kamikaze role in units.csv), unless the match turns them off (npcDrones):
 //   draftDrones swaps 0-2 units of the simulated draft for Drones, with its own seeded dice.
 //   BUY D (up to max_alive, 4) when they have 5+ ground units in one zone, the bank covering a medic too.
@@ -41,6 +58,7 @@
 
 const { TYPES, TYPE_IDS, ZONES, DRAFT_BUDGET, ROSTER_LIMIT, zoneOf, mulberry32, spent, total } = require('./constants');
 const U = require('./units');
+const RB = require('./red-buy');
 
 const RALLY_FZ = 2; // forward zone we gather in first: z3 for Green, z6 for Ember
 const PUSH_RATIO = 0.85; // we advance while our strength is at least this share of theirs
@@ -51,8 +69,8 @@ const RALLY_WAIT_S = 4; // seconds gathered at the rally zone before the first p
 const PLAIN_STYLE = Object.freeze({ rallyFz: RALLY_FZ, pushRatio: PUSH_RATIO, focus: 'medic', fallbackHp: 0.4, jitter: false });
 // Agency odds. Temperament is rolled once per match; the window odds apply each decision window.
 const AGENCY = Object.freeze({
-  // Tuned so a 60-match sweep stays near even (about 40-60% either way) against the
-  // warrior-like Greens and the autopilot. z7 and a non-medic focus are the sharper rolls.
+  // Rally, push nerve, focus and fallback rolls: z7 and a non-medic focus are the sharper ones. How strong
+  // Ember is overall is set by its economy (MAIN_BUY, HOLD_MEDIC_PRICE below), not by these rolls.
   rally: [[RALLY_FZ, 0.70], [RALLY_FZ + 1, 0.18], [RALLY_FZ - 1, 0.12]], // z6 / z5 / z7 for Ember
   pushRatio: [0.82, 0.90], // uniform, a narrow band around 0.85
   focus: [['medic', 0.72], ['armor', 0.12], ['ranged', 0.11], ['biggest', 0.05]],
@@ -89,6 +107,13 @@ function describeStyle(mem, side = 1) {
 function fwd(side, zone) { return side === 0 ? zone : ZONES - 1 - zone; }
 function wireZone(side, fz) { return `z${(side === 0 ? fz : ZONES - 1 - fz) + 1}`; }
 function codeOf(type) { return U.CODE_BY_TYPE[type]; }
+/** FOCUS line text for a unit type or a structure ('hospital' H, 'gun', 'depot', 'turret'). */
+function focusLine(f) { return f === 'hospital' ? 'FOCUS H' : f === 'gun' ? 'FOCUS GUN' : f === 'depot' ? 'FOCUS DEPOT' : f === 'post' ? 'FOCUS POST' : f === 'turret' ? 'FOCUS TURRET' : `FOCUS ${codeOf(f)}`; }
+/** Ahead at the time limit by the match's own tie-break: Team HP, then tower points, then zones held. 1 ahead, -1 behind, 0 level. */
+function lead(tw) {
+  for (const k of ['hp', 'pts', 'zones']) if (tw[k][0] !== tw[k][1]) return tw[k][0] > tw[k][1] ? 1 : -1;
+  return 0;
+}
 const isHealer = type => U.roleOf(type) === 'healer';
 const isKamikaze = type => U.roleOf(type) === 'kamikaze';
 const isFlying = type => U.isFlying(type);
@@ -99,6 +124,9 @@ const DRONE_DRAFT = Object.freeze({
   armor: [[0, 0.50], [1, 0.40], [2, 0.10]],
 });
 const CLUMP = 5; // their ground units in one zone that make us buy Drones
+// Towers: the last stretch of the match where the lead decides it, and how recent a hit counts as 'under fire'.
+const LAST_PUSH_S = 60;
+const UNDER_FIRE_S = 5;
 const SPREAD_AT = 2; // their Drones alive that make us spread out (and FOCUS D)
 const ENGAGED_STACK = 2; // their engaged units in one blast's reach that launch our reserved Drones
 
@@ -130,6 +158,27 @@ function draftDrones(counts, seed, plan) {
   return out;
 }
 
+/**
+ * One mortar in the opening, when the table has one. Drops Scouts, then Rifles, until the 200 CR
+ * budget fits. Never drops armor, a medic, or a drone. Returns the same counts when it cannot fit.
+ */
+function draftMortars(counts) {
+  const tube = U.idsWithRole('mortar')[0];
+  if (!tube || (counts[tube] || 0) > 0) return counts;
+  const out = { ...counts };
+  let guard = 0;
+  while ((spent(out) + TYPES[tube].cost > DRAFT_BUDGET || total(out) >= ROSTER_LIMIT) && guard++ < 24) {
+    const fast = TYPE_IDS.find(k => U.roleOf(k) === 'fast' && out[k] > 0);
+    const ranged = TYPE_IDS.find(k => U.roleOf(k) === 'ranged' && out[k] > 0);
+    const k = fast || ranged;
+    if (!k) return counts;
+    out[k]--;
+  }
+  if (spent(out) + TYPES[tube].cost > DRAFT_BUDGET || total(out) >= ROSTER_LIMIT) return counts;
+  out[tube] = 1;
+  return out;
+}
+
 /** Rough fighting value of one unit at its current HP: sqrt(hp x damage per second). */
 function unitValue(u) {
   const t = TYPES[u.type];
@@ -147,11 +196,26 @@ function reserveValue(reserve) {
 function newMemory(seed) {
   const mem = { phase: 'rally', target: null, focus: null, autobuy: null, rallySince: null, style: PLAIN_STYLE, rng: null, late: false };
   if (Number.isFinite(seed)) { mem.rng = mulberry32(seed >>> 0); mem.style = rollStyle(mem.rng); }
+  // Smart buying (src/agrts/red-buy.js, docs/RED-AI.md) has its own seeded state and rng; it is used only when the match sets mem.buy = 'smart'
+  // (the range engine does, default) and the view carries view.caps. Anything else plays the plain commander below.
+  mem.rb = RB.newState(Number.isFinite(seed) ? seed : null);
+  mem.buy = 'old';
   return mem;
 }
 
-/** Our plan's main buy: the most common non-medic type in the reinforcement queue, else armor. */
-function mainBuy(queue) {
+// Ember's AUTOBUY unit, the one difficulty setting for how Ember spends (Oct 14 audit, Ray approved):
+//   'ranged' (default): a Rifle every match. 'queue': the old pick, the most common non-medic type in the
+//   random pre-match queue, which came out Scout (58%) or Breaker (42%): Scouts died by the dozen and the
+//   Breaker rule sat at its 2-alive cap with the bank parked, so Green won 63 of 72 and Ember never took a base.
+// EMBER_MAIN_BUY=queue (env) or MAIN_BUY below dials it back.
+const MAIN_BUY = process.env.EMBER_MAIN_BUY === 'queue' ? 'queue' : 'ranged';
+// Second dial: HOLD_MEDIC_PRICE puts `RESERVE <medic price>` back on the AUTOBUY (the pre-audit rule, a medic is
+// always affordable but ~36 CR sits idle all match). Off by default; EMBER_MEDIC_HOLD=1 turns it on.
+const HOLD_MEDIC_PRICE = process.env.EMBER_MEDIC_HOLD === '1';
+
+/** Our plan's main buy: a Rifle (MAIN_BUY 'ranged'), or with MAIN_BUY 'queue' the most common non-medic type in the queue, else armor. */
+function mainBuy(queue, mode = MAIN_BUY) {
+  if (mode !== 'queue') { const r = U.idsWithRole('ranged')[0]; if (r) return r; }
   const n = {};
   for (const k of queue || []) if (TYPES[k] && !isHealer(k)) n[k] = (n[k] || 0) + 1;
   let best = null;
@@ -179,6 +243,7 @@ function commanderOrders(view, mem) {
   const theirDrones = kamikaze ? theirs.filter(u => u.type === kamikaze).length : 0;
   const theirGround = theirs.filter(u => !isFlying(u.type));
   const armor = U.idsWithRole('armor')[0];
+  const tube = view.mortar || null;
   const lines = [];
   const why = [];
   let title = '';
@@ -199,6 +264,8 @@ function commanderOrders(view, mem) {
   const hurt = ours.filter(u => u.hp <= u.max - 20).length;
   const medicPrice = healer ? view.price[healer] : null;
   const main = mainBuy(view.queue);
+  const tubeN = tube ? ours.filter(u => u.type === tube).length + (view.reserve[tube] || 0) : 0;
+  const tankN = armor ? ours.filter(u => u.type === armor).length + (view.reserve[armor] || 0) : 0;
   // Drones are launch and forget, so the launch is the timing decision: our Drones stay in reserve
   // until their units are already fighting ours in a stack (view.engagedStack, ENGAGED_STACK+), and
   // then every Drone in reserve goes at once. Everything else deploys as soon as it is in reserve.
@@ -230,14 +297,29 @@ function commanderOrders(view, mem) {
     return `DEPLOY ${codes.slice(0, Math.min(ROSTER_LIMIT, slots)).join(' ')}`;
   };
   const buyAnd = type => { lines.push(`BUY ${codeOf(type)}`); const d = deployLine(type); if (d) lines.push(d); };
-  if (healer && !ourMedics && hurt >= 2 && view.bank >= medicPrice) {
+  // One buy rule for every path (match._buyRoom): at the buy cap or 24 living units no BUY is posted.
+  const mayBuy = !view.buyCapped;
+  // Smart buying: ONE decision from what Green fields (red-buy.js). It posts BUY (medic / drones) or the standing AUTOBUY; the shared buy rules accept or refuse.
+  const smart = mem.buy === 'smart' && !!view.caps && !!mem.rb;
+  const bp = smart ? RB.plan(view, mem.rb) : null;
+  if (smart) {
+    if (mayBuy && bp.buyNow) {
+      buyAnd(bp.buyNow);
+      why.push(bp.why);
+    } else if (reserveN) {
+      const d = deployLine(null);
+      if (d) lines.push(d);
+      if (d && launch && drone && (view.reserve[drone] || 0) > 0) why.push(`${codeOf(drone)} into the fight`);
+    }
+  } else if (mayBuy && healer && !ourMedics && hurt >= 2 && view.bank >= medicPrice) {
     buyAnd(healer);
     why.push('medic for our hurt');
-  } else if (view.buyCapped && main && view.bank >= view.price[main] + (medicPrice || 0)) {
-    buyAnd(main);
-  } else if (drone && view.droneRoom > 0 && clumped(theirGround) && view.bank >= view.price[drone] + (medicPrice || 0)) {
+  } else if (mayBuy && drone && view.droneRoom > 0 && clumped(theirGround) && view.bank >= view.price[drone] + (medicPrice || 0)) {
     buyAnd(drone);
     why.push(launch ? `${codeOf(drone)} on their stack` : `${codeOf(drone)} kept for a fight`);
+  } else if (mayBuy && tube && tankN >= 1 && tubeN < Math.min(2, tankN) && view.bank >= view.price[tube] + (medicPrice || 0)) {
+    buyAnd(tube);
+    why.push(`${codeOf(tube)} behind the tanks`);
   } else if (reserveN) {
     const d = deployLine(null);
     if (d) lines.push(d);
@@ -260,16 +342,23 @@ function commanderOrders(view, mem) {
   const open = theirGround.length === 0;
   const together = open || (army.length > 0 && army.filter(z => Math.abs(z - center) <= 1).length >= Math.ceil(army.length * 0.75));
   const intruders = theirGround.filter(u => fz(u) <= 1);
+  // Towers: two or more of their ground units in the zone of our own gun tower, with our army already beyond it.
+  const tw = view.towers || null;
+  const ourGun = tw && tw.ours.gun && tw.ours.gun.alive ? tw.ours.gun : null;
+  const gunIntruders = ourGun ? theirGround.filter(u => zoneOf(u.x) === ourGun.zone) : [];
+  const gunDefend = !!ourGun && gunIntruders.length >= 2 && center > fz({ x: ourGun.x });
+  const lastPush = !!tw && tw.timeLeft <= LAST_PUSH_S;
   let target;
   let defend = false;
-  if (intruders.length >= 2 && center > 1) {
+  let allIn = null; // the structure kind the last-minute push goes for
+  if ((intruders.length >= 2 && center > 1) || gunDefend) {
     // Their units in our two home zones: CLEAR, and the normal pick goes for home-zone
     // intruders first (the same base-threat rule every unit without an order uses).
     defend = true;
     mem.phase = 'rally';
     mem.rallySince = null;
-    why.push('defend home');
-    title = `DEFEND · ${wireZone(side, Math.min(...intruders.map(fz))).toUpperCase()}`;
+    why.push(intruders.length >= 2 ? 'defend home' : 'defend gun');
+    title = `DEFEND · ${wireZone(side, Math.min(...(intruders.length >= 2 ? intruders : gunIntruders).map(fz))).toUpperCase()}`;
   } else if (mem.phase === 'rally') {
     target = mem.target == null ? rallyFz : mem.target;
     if (mem.rallySince == null) mem.rallySince = view.elapsed;
@@ -307,6 +396,33 @@ function commanderOrders(view, mem) {
       if (advance && !wait) target += 1;
       why.push(`${wait ? 'hold' : 'push'} ${wireZone(side, target)}`);
       title = wait ? `HOLD · ${wireZone(side, target).toUpperCase()}` : `PUSH → ${wireZone(side, target).toUpperCase()}`;
+    }
+  }
+  // Their base turret stands: no push into their home zone unless 3+ of our ground units are within
+  // one zone of each other (a lone raider only feeds it). Hold the zone in front of it and mass there.
+  if (!defend && target === ZONES - 1 && (view.enemyTurret || 0) > 0) {
+    const massed = army.filter(z => Math.abs(z - center) <= 1).length;
+    if (massed < 3) {
+      target = ZONES - 2;
+      if (why.length && /^push /.test(why[why.length - 1])) why.pop();
+      why.push('mass for turret');
+      title = `MASS · ${wireZone(side, target).toUpperCase()}`;
+    }
+  }
+  // Towers, the last minute: hold a lead, chase a deficit onto their weakest tower (or their base when none is left).
+  if (lastPush && !defend && target != null && army.length) {
+    const ld = lead(tw);
+    if (ld > 0) {
+      if (target > center) { target = Math.max(1, center); why.push('hold the lead'); title = `HOLD LEAD · ${wireZone(side, target).toUpperCase()}`; }
+    } else {
+      const cand = ['gun', 'depot', 'hospital'].map(k => ({ k, t: tw.theirs[k] })).filter(c => c.t && c.t.alive).sort((a, b) => a.t.hp - b.t.hp);
+      if (cand.length) {
+        allIn = cand[0].k;
+        target = fwd(side, cand[0].t.zone);
+        why.push(`all in on ${allIn === 'hospital' ? 'hospital' : allIn}`);
+        title = `ALL IN · ${wireZone(side, target).toUpperCase()}`;
+      } else { target = ZONES - 1; why.push('all in on base'); title = 'BASE ATTACK'; }
+      mem.phase = 'push';
     }
   }
   const loose = ours.some(u => !u.radio);
@@ -358,13 +474,47 @@ function commanderOrders(view, mem) {
       const helpers = ours.filter(u => Math.abs(zoneOf(u.x) - z) === 1 && !(u.radio && u.radio.kind === 'fallback')).length;
       if (helpers && (!best || n[z][1] - n[z][0] > best.gap)) best = { z, gap: n[z][1] - n[z][0] };
     }
+    // Towers: our gun tower or depot hit in the last 5 s with 2+ of their ground units in its zone, and units one zone away.
+    if (!best && tw) {
+      for (const t of [tw.ours.gun, ...(tw.ours.posts || [tw.ours.post]), tw.ours.depot]) {   // both our forward posts are defended like the gun tower
+        if (!t || !t.alive || t.hitAgo == null || t.hitAgo > UNDER_FIRE_S || n[t.zone][1] < 2) continue;
+        const helpers = ours.filter(u => Math.abs(zoneOf(u.x) - t.zone) === 1 && !(u.radio && u.radio.kind === 'fallback')).length;
+        if (helpers) { best = { z: t.zone, gap: n[t.zone][1] - n[t.zone][0] }; break; }
+      }
+    }
     if (best) { lines.push(`ASSIST z${best.z + 1} 1`); why.push(`assist z${best.z + 1}`); }
   }
 
-  // 4. FOCUS: their medics, else their breakers when 3+. A match whose temperament picked
-  // breakers, rifles or their biggest group focuses that while 2+ are on the field.
+  // 4. FOCUS: their field hospital while it is alive and a ground unit of ours is within 2 zones
+  // or weapon range (FIELD_HOSPITAL=1). Otherwise their medics, else their breakers when 3+.
+  // A match whose temperament picked breakers, rifles or their biggest group focuses that while 2+ are on the field.
   let focus = null;
   const count = k => theirs.filter(u => u.type === k).length;
+  const hosp = view.enemyHospital;
+  const hospReach = !!(hosp && hosp.alive && ours.some(u => {
+    if (isFlying(u.type)) return false;
+    if (Math.abs(zoneOf(u.x) - hosp.zone) <= 2) return true;
+    const t = TYPES[u.type];
+    return !!(t && Math.hypot(hosp.x - u.x, hosp.y - u.y) < t.range + 8);
+  }));
+  // Towers: the ladder after the hospital, by where the army stands (within one zone of the structure or in weapon range).
+  const reachStruct = t => !!(t && t.alive && ours.some(u => {
+    if (isFlying(u.type)) return false;
+    if (Math.abs(zoneOf(u.x) - t.zone) <= 1) return true;
+    const ty = TYPES[u.type];
+    return !!(ty && Math.hypot(t.x - u.x, t.y - u.y) < ty.range + 8);
+  }));
+  let towerFocus = null;
+  if (tw) {
+    if (allIn && reachStruct(tw.theirs[allIn])) towerFocus = allIn;
+    else if (reachStruct(tw.theirs.gun)) towerFocus = 'gun';
+    else if ((tw.theirs.posts || [tw.theirs.post]).some(reachStruct)) towerFocus = 'post';   // either of their posts (FOCUS POST shoots / walks at the nearest)   // their forward post (range launch flow): it feeds their reinforcements forward
+    else if ((view.enemyTurret || 0) > 0 && ours.some(u => !isFlying(u.type) && fz(u) >= ZONES - 2)) towerFocus = 'turret';
+    else if (reachStruct(tw.theirs.depot)) towerFocus = 'depot';
+  }
+  if (hospReach && !(allIn && allIn !== 'hospital' && towerFocus)) focus = 'hospital';
+  else if (towerFocus) focus = towerFocus;
+  else {
   let pref = null;
   if (st.focus === 'armor') pref = armor;
   else if (st.focus === 'ranged') pref = U.idsWithRole('ranged')[0];
@@ -375,16 +525,27 @@ function commanderOrders(view, mem) {
   else if (pref && count(pref) >= 2) focus = pref;
   else if (healer && theirs.some(u => u.type === healer)) focus = healer;
   else if (armor && count(armor) >= 3) focus = armor;
+  }
   if (focus !== (view.focus || null) && room() && (focus || view.focus)) {
-    lines.push(focus ? `FOCUS ${codeOf(focus)}` : 'FOCUS NONE');
-    if (focus) why.push(`focus ${codeOf(focus)}`);
+    lines.push(focus ? focusLine(focus) : 'FOCUS NONE');
+    if (focus) why.push(focus === 'hospital' ? 'focus hospital' : focus === 'gun' || focus === 'depot' || focus === 'post' || focus === 'turret' ? `focus ${focus}` : `focus ${codeOf(focus)}`);
   }
 
-  // 5. AUTOBUY our main unit, keeping one medic's price in the bank.
-  if (!view.autobuy && !view.buyCapped && room()) {
-    const k = main;
-    if (k) lines.push(`AUTOBUY ${codeOf(k)}${medicPrice ? ` RESERVE ${medicPrice}` : ''}`);
+  // 5. AUTOBUY our main unit (a Rifle), no medic reserve held unless HOLD_MEDIC_PRICE.
+  // Smart buying: the standing AUTOBUY follows the plan (posted only when it changes; movement orders come first, a full window retries next time).
+  // It buys the moment the bank covers the unit, between windows too. OFF while Red waits for an explicit Medic / Drone buy.
+  if (smart) {
+    const want = mayBuy ? bp.autoType : null;
+    if (want && view.autobuy !== want && room()) { lines.push(`AUTOBUY ${codeOf(want)}`); if (!bp.buyNow) why.push(bp.why); }
+    else if (!want && view.autobuy && room()) lines.push('AUTOBUY OFF');
   }
+  if (!smart && !view.autobuy && !view.buyCapped && room()) {
+    const k = main;
+    if (k) lines.push(`AUTOBUY ${codeOf(k)}${HOLD_MEDIC_PRICE && medicPrice ? ` RESERVE ${medicPrice}` : ''}`);
+  }
+
+  // 5b. Bought towers (TOWER_BUY and TOWER_BUY_EMBER on only; view.towerBuy is null otherwise): field full and the bank covers a tower plus a Rifle.
+  if (view.towerBuy && view.towerBuy.room > 0 && slots <= 0 && room() && view.bank >= view.towerBuy.price + 40) { lines.push('BUY TOWER'); why.push('tower for idle credits'); }
 
   // 6. FALLBACK one badly hurt fighter when our medic is on the field.
   if (room() && ours.some(u => isHealer(u.type))) {
@@ -392,7 +553,8 @@ function commanderOrders(view, mem) {
     if (low) lines.push(`FALLBACK ${low.tag}`);
   }
 
+  mem.last = { t: view.elapsed, ratio: +Math.min(9, ratio).toFixed(2), center, together, open, army: army.length, target: mem.target, phase: mem.phase };   // debug / tests: what the window saw
   return { lines, why: why.slice(0, 2).join(', ').slice(0, 60), title: title || 'COMMANDING', detail: `${ours.length} on the field v ${theirs.length} · strength ${ratio >= 9 ? 'clear' : ratio.toFixed(2)}` };
 }
 
-module.exports = { commanderOrders, newMemory, mainBuy, unitValue, rollStyle, describeStyle, draftDrones, RALLY_FZ, PUSH_RATIO, RETREAT_RATIO, AGENCY, PLAIN_STYLE, DRONE_DRAFT, CLUMP, SPREAD_AT, ENGAGED_STACK };
+module.exports = { commanderOrders, newMemory, mainBuy, MAIN_BUY, HOLD_MEDIC_PRICE, unitValue, rollStyle, describeStyle, draftDrones, draftMortars, RALLY_FZ, PUSH_RATIO, RETREAT_RATIO, AGENCY, PLAIN_STYLE, DRONE_DRAFT, CLUMP, SPREAD_AT, ENGAGED_STACK, RB };

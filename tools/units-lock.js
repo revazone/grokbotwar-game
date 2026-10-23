@@ -3,7 +3,8 @@
 //   node tools/units-lock.js            check (exit 1 if units.csv is not the official table)
 //   node tools/units-lock.js --update   write units.lock.json for the current units.csv (then commit both)
 //   node tools/units-lock.js --hash <file>   print the fingerprint of any unit table
-// docs/SPEC.md section 5.4, "Locked unit table".
+// docs/SPEC.md section 5.4, "Locked unit table". This is the fingerprint of the BUNDLED units.csv. A table downloaded from the published
+// ruleset (src/agrts/rules.js, docs/RULES-REMOTE.md) is checked by the arena against that ruleset instead and never fails a match: it logs a notice with both hashes.
 'use strict';
 const fs = require('fs');
 const path = require('path');

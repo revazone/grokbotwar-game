@@ -94,3 +94,59 @@
  .team .base-name>.cr{position:absolute;right:6px;top:100%;margin-top:1px;font-size:7.5px;line-height:8px;pointer-events:none}
  .team .arsenal-title{padding-right:36px}
 }
+.crow{white-space:normal;line-height:11.5px;margin-bottom:3px;color:#c2cbbd;overflow-wrap:anywhere}.crow .at{color:#efbd68}.crow b{font-weight:600}
+
+/* Phone name row above the side line (Oct 12): on phone the name + HP pill (+ bank) row leaves the side panel and sits
+   centered just above that side's green/red top border, so COMM NET gains lines. Desktop unchanged. Layout-only block,
+   swappable with the coming unified corner redesign. */
+@media(max-width:950px) and (orientation:landscape){
+ .team{position:relative;overflow:visible;grid-template-rows:minmax(0,1fr)}
+ .team .base{position:absolute;left:0;right:0;bottom:calc(100% + 3px);grid-area:auto;margin:0;padding:0;height:13px;display:flex;flex-direction:row;justify-content:center;align-items:center;gap:5px;pointer-events:none}
+ .team .base-name span:first-child{max-width:55%;font:800 12px/13px 'Barlow Condensed'}
+ .team .base-name>.cr{position:static;margin:0;font-size:7.5px;line-height:11px}
+ .team .hp{line-height:10px;padding:1px 5px}
+ .team .agent,.team .arsenal{grid-row:1}
+ .team .arsenal-title{padding-right:0}
+ .team .dfeed{height:52.5px}
+}
+@media(max-width:950px) and (orientation:portrait){
+ .team{position:relative;overflow:visible}
+ .top{flex-direction:row;align-items:baseline;gap:10px;height:59px;box-sizing:border-box}
+ .eyebrow{margin-top:0}
+ .team .base{position:absolute;left:0;right:0;bottom:calc(100% + 2px);grid-area:auto;margin:0;padding:0;border:0;background:transparent}
+ .team .base-name{display:flex;justify-content:center;align-items:center;gap:6px}
+ .team .base-name span:first-child{display:block;min-width:0;max-width:60%;font:800 14px/16px 'Barlow Condensed';white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .team .base-name>.cr{font-size:8px}
+ .team .bar{display:none}
+ .team .dfeed{height:216px}
+ .team .agent{border-top:0;margin-top:0;padding-top:2px}
+}
+/* COMM NET scrollback (Oct 12): scroll back and copy; heights unchanged. */
+.dfeed{overflow-anchor:none;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;user-select:text;-webkit-user-select:text;scrollbar-width:thin;scrollbar-color:#3a4842 transparent}
+
+/* Arsenal icons, larger (Oct 12): outlined icons (outline drawn in draw.js) at 26px on desktop/portrait and 20px on
+   the phone landscape chips; rows grow to fit. Panel and arena sizes are unchanged. */
+.inventory{grid-auto-rows:28px}
+.invrow{height:28px}
+.uicon{width:26px;height:26px;margin-right:7px}
+@media(max-width:950px) and (orientation:landscape){
+ .team .invrow{height:21px;padding:0 3px 0 1px}
+ .team .uicon{width:20px;height:20px;margin:0}
+ .team .invrow .count{font:700 10px/21px 'Barlow Condensed'}
+}
+
+/* hone landscape only (Oct 12): touch phones in portrait get a full-screen rotate prompt instead of the game.
+   pointer:coarse keeps narrow desktop windows unaffected. */
+.rotate-gate{display:none}
+@media (orientation:portrait) and (max-width:950px) and (pointer:coarse){
+.rotate-gate{display:flex;position:fixed;inset:0;z-index:50;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px;background:radial-gradient(ellipse at 50% 44%,#18221f 0,#0b1012 68%);color:var(--text)}
+.rotate-gate .brand{font-size:30px}
+.rotate-gate svg{color:var(--mint);filter:drop-shadow(0 0 8px rgba(186,252,130,.55));margin-top:10px}
+.rotate-gate .rg-ph{transform-origin:60px 54px;animation:rgrot 2.4s ease-in-out infinite}
+.rotate-gate .rg-title{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:24px;letter-spacing:2px;color:var(--mint)}
+.rotate-gate .rg-sub{font-size:13px;color:var(--muted)}
+.shell{visibility:hidden}
+body{overflow:hidden}
+}
+@keyframes rgrot{0%,25%{transform:rotate(0)}55%,85%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
+@media (prefers-reduced-motion:reduce){.rotate-gate .rg-ph{animation:none;transform:rotate(-90deg)}}
