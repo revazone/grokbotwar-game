@@ -58,11 +58,17 @@ if (require.main === module) (async () => {
   const o = await run({ fmt, strategyKv: st.stdout || '', lastId: li > 0 ? +process.argv[li + 1] : 0 });
   const s = [...o.lat].sort((x, y) => x - y); console.log(`RESULT ${o.result}\nreports ${o.reports.length} posts ${o.posts.length} refusals ${o.refusals.length} decide median ${(s[s.length >> 1] || 0).toFixed(3)} ms`);
   for (const r of o.refusals) console.log(`  REFUSED ${r.order}: ${r.result}`);
-  // Improvement Loop (tools/improve.js): after every END, with no human, pick the worst decision, test one tunable change, keep or revert. GBW_IMPROVE=0 turns it off.
+  // Improvement Loop: record this real match and judge running trials (tools/lesson.js, instant, no replays). The agent then reads
+  // `node tools/lesson.js summary` and applies one change with `lesson.js set`. GBW_IMPROVE=0 off; GBW_IMPROVE=replay also starts tools/improve.js (slow, optional).
   if (o.result && o.result !== 'no-match' && process.env.GBW_IMPROVE !== '0') {
     const sd = path.dirname(LESSONS.file()); fs.mkdirSync(sd, { recursive: true }); const mf = path.join(sd, 'last-match.json'); fs.writeFileSync(mf, JSON.stringify(o));
-    const lg = fs.openSync(path.join(sd, 'improve.out'), 'a');
-    require('child_process').spawn(process.execPath, [path.join(ROOT, 'tools', 'improve.js'), '--log', mf], { cwd: ROOT, detached: true, stdio: ['ignore', lg, lg] }).unref();
-    console.log(`IMPROVE started (log ${path.join(sd, 'improve.out')})`);
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'tools', 'lesson.js'), 'record', '--log', mf], { cwd: ROOT, encoding: 'utf8', timeout: 20000 });
+    process.stdout.write((r.stdout || '').split('\n').filter(Boolean).map(x => `LESSON ${x}\n`).join('') || `LESSON record failed: ${(r.stderr || '').slice(0, 200)}\n`);
+    console.log('NEXT: node tools/lesson.js summary, then lesson.js set (up to 3 keys)');
+    if (process.env.GBW_IMPROVE === 'replay') {
+      const lg = fs.openSync(path.join(sd, 'improve.out'), 'a');
+      require('child_process').spawn(process.execPath, [path.join(ROOT, 'tools', 'improve.js'), '--log', mf], { cwd: ROOT, detached: true, stdio: ['ignore', lg, lg] }).unref();
+      console.log(`IMPROVE started (log ${path.join(sd, 'improve.out')})`);
+    }
   }
 })().catch(e => { console.error('loop:', e.message); process.exit(1); });

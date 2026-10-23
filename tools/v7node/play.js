@@ -70,7 +70,8 @@ function listCtx(V) {
 /** One unit from the buy list, or null. fr = free field slots, bank = credits we may spend. */
 function listPick(V, fr, bank, opts = {}) {
   const C = listCtx(V), { em, om, en } = C; const n = u => om[u] || 0;
-  const can = u => { if (u === 'R' && opts.noR) return false; const b = V.buy.find(x => x.u === u); return !!b && b.price <= bank && fr >= (u === 'S' || u === 'D' ? 3 : 1) && n(u) + (u === 'S' || u === 'D' ? 3 : 1) <= LIST_CAP[u]; };
+  const LC = opts.caps || LIST_CAP, TF = opts.tankFloor ?? 2;
+  const can = u => { if (u === 'R' && opts.noR) return false; if ((u === 'S' || u === 'D') && opts.noSD) return false; const b = V.buy.find(x => x.u === u); return !!b && b.price <= bank && fr >= (u === 'S' || u === 'D' ? 3 : 1) && n(u) + (u === 'S' || u === 'D' ? 3 : 1) <= LC[u]; };
   const skip = {
     R: () => n('R') * 2 > C.army && C.army >= 4,
     T: () => (em.S || 0) >= 3 && n('T') >= 2,
@@ -81,7 +82,7 @@ function listPick(V, fr, bank, opts = {}) {
   };
   const ok = u => can(u) && !skip[u]();
   if (ok('M')) return 'M';                                   // 1. medic when 2+ fighters are badly hurt
-  if (!opts.tankHot && n('T') < 2 && can('T') && !((em.S || 0) >= 3 && n('T') >= 1)) return 'T';   // 2. tank floor of 2 (vs a scout swarm: just 1)
+  if (!opts.tankHot && n('T') < TF && can('T') && !((em.S || 0) >= 3 && n('T') >= 1)) return 'T';   // 2. tank floor of 2 (vs a scout swarm: just 1)
   if (ok('D')) return 'D';                                   // drones: their trigger (clump 5+, turtle, bare hospital) is the reason to buy
   const cands = ['R', 'T', 'S', 'O'].filter(u => ok(u) && !(u === 'T' && opts.tankHot));   // tankHot: 2+ tanks died in the last 60 s, so no tank refills
   if (n('T') >= 2 && !((em.O || 0) + (em.M || 0) >= 1 || C.finish)) { const i = cands.indexOf('T'); if (i >= 0 && cands.length > 1) cands.splice(i, 1); }   // 3rd tank only vs mortars/medics or to finish structures
@@ -105,7 +106,7 @@ class Play {
     if (o.push === 'early') this.S_pe = 30; if (o.push === 'late') { this.S_pt = 200; this.S_pe = 200; this.S_hp = 1; }
     Object.assign(this, { fd: 0, fg: 0, fdp: 0, fin: 0, first: 1, mbank: 0, prevab: '', ghs: '', ar: 0, rbn: 0, bn: 0, las: null, asb: {}, pg: 0, ph: 0, pd: 0, mdone: '' });
     this.medicWant = null; this.acked = new Set(); this.inject = []; this.px = Object.assign({}, PX_DEFAULT); this.raid = !!o.raid; this.S_note = o.note || ''; this.rd = 0; this.log = o.log || (() => {});
-    this.K = LESSONS.normalize(o.lessons || {}); this.rbuys = [];   // lessons: read once per match
+    this.K = LESSONS.normalize(o.lessons || {}); this.rbuys = []; this.sdbuys = []; this.caps = LESSONS.caps(this.K);   // lessons: read once per match
   }
   cmdrMap(id, text) {
     const t = text.toLowerCase(); const o = [];
@@ -133,21 +134,25 @@ class Play {
     // Lesson rifleRepMin: at most N rifle buys per 60 s (never while the base is threatened); listPick skips rifles, other units get the credits.
     { const tn = +(V.t || 0); S.rbuys = S.rbuys.filter(x => tn - x < 60); }
     const RC = S.K.rifleRepMin > 0 && !bt && S.rbuys.length >= S.K.rifleRepMin;
+    // Lesson sdRepMin: at most N scout-trio + drone-pack buys per 60 s (churn guard).
+    { const tn = +(V.t || 0); S.sdbuys = S.sdbuys.filter(x => tn - x < 60); }
+    const SD = S.K.sdRepMin > 0 && S.sdbuys.length >= S.K.sdRepMin;
+    const LO = { caps: S.caps, tankFloor: S.K.tankFloor, noSD: SD };
     const fT = (V.f.match(/\bT\d+@/g) || []).length, resT = sumDigits(res, /(\d+)(?=T)/g);
     if (act < 6 && res !== 'none') ord.push('DEPLOY ALL');
     else if (act < 6 && !mw0 && V.buy.some(b => b.u === 'T' || b.u === 'R')) {
       const bk1 = V.bank === '' ? 0 : +V.bank; const fr = 6 - act;
-      const lo = { noD: V.t !== '' && +V.t - (S.lastD ?? -99) < 30, tankHot: TH, noR: RC };   // drones: one pack, then 30 s before the next
+      const lo = { ...LO, noD: V.t !== '' && +V.t - (S.lastD ?? -99) < 30, tankHot: TH, noR: RC };   // drones: one pack, then 30 s before the next
       let u = listPick(V, fr, bk1, lo) || counterPick(V, ['T', 'R'], bk1) || V.buy.find(b => b.u === 'T' || b.u === 'R').u;
       const pb = V.buy.find(b => b.u === u); const pu = pb ? pb.price : 999; const left = bk1 - pu; const slots = fr - slotsOf(u);
       // spend down to under 30 CR: a second buy-list pick when a slot is free
       const V2 = { ...V, res: 'none', resAll: '', f: V.f + ` ${u}1@z1`.repeat(slotsOf(u)) };
-      const u2 = slots >= 1 && left >= 30 ? listPick(V2, slots, left, { noD: true, noR: RC }) : null;
+      const u2 = slots >= 1 && left >= 30 ? listPick(V2, slots, left, { ...LO, noD: true, noR: RC }) : null;
       if (u === 'D' || u2 === 'D') S.lastD = +V.t || 0;
       if (u2) ord.push(`BUY ${u}`, `BUY ${u2}`, 'DEPLOY ALL'); else ord.push(`BUY ${u}`, slotsOf(u) === 3 ? `DEPLOY ${u} ${u} ${u}` : `DEPLOY ${u}`);
     } else if (act >= 6 && !mw0) {
       const bk0 = V.bank === '' ? 0 : +V.bank; let rn0 = sumDigits(res); if (res === 'none') rn0 = 0;
-      if (bk0 >= 100 && rn0 < 2) { const nm = (V.f.match(/\bM\d+@/g) || []).length; const u = listPick(V, 3, bk0, { noD: true, tankHot: TH, noR: RC }); if (nm < 1 && has(V, 'M') && bk0 >= 200) ord.push('BUY M'); else if (u) ord.push(`BUY ${u}`); }   // field full: bank a counter in reserve (was >= 200, T/M/R only)
+      if (bk0 >= 100 && rn0 < 2) { const nm = (V.f.match(/\bM\d+@/g) || []).length; const u = listPick(V, 3, bk0, { ...LO, noD: true, tankHot: TH, noR: RC }); if (nm < 1 && has(V, 'M') && bk0 >= 200) ord.push('BUY M'); else if (u) ord.push(`BUY ${u}`); }   // field full: bank a counter in reserve (was >= 200, T/M/R only)
     }
     const mineW = V.hasF ? V.f.trim().split(/\s+/).filter(Boolean).length : 0;
     S.ghs = '';   // no reinforcement group hold with a free slot: units deploy as they are bought (the field-full branch above still banks a reserve)
@@ -189,7 +194,7 @@ class Play {
     if (S.ar === 1 && rn >= 4) { ord.unshift('AUTOBUY OFF'); S.ar = 2; } else if (S.ar === 2 && rn < 4) { ord.unshift('AUTOBUY R'); S.ar = 1; }
     if (rn >= 4 && act >= 6) {
       ord = ord.filter(x => x !== 'BUY R'); const ntc = fT + resT; const noc = (V.f.match(/\bO\d+@/g) || []).length + sumDigits(res, /(\d+)(?=O)/g);
-      if (ntc < 2 && tw !== 1 && !TH && has(V, 'T')) ord.push('BUY T'); else if (noc < 2 && has(V, 'O')) ord.push('BUY O');
+      if (ntc < S.K.tankFloor && tw !== 1 && !TH && has(V, 'T')) ord.push('BUY T'); else if (noc < 2 && has(V, 'O')) ord.push('BUY O');
     }
     const rg = g1(l, / rng G(\d+)/);
     if (rg !== '' && tw === 1 && rg === '0' && act >= 6 && t <= 300 && S.rbn < 3 && !ord.some(x => /^BUY/.test(x)) && V.bank !== '' && +V.bank >= 80) { ord.push('BUY RANGE'); S.rbn++; S.log(`  BUYRANGE T${t} (${S.rbn} of 3)`); }
@@ -231,28 +236,32 @@ class Play {
       const tb = V.buy.find(b => b.u === 'T'); const tPx = S.px.T || 70; let nR = 0, swapped = 0;
       ord = ord.filter(x => {
         if (x !== 'BUY R') return true;
-        if (!swapped && !TH && tC < 2 && tb && tb.price <= bkC) { swapped = 1; return true; }   // replaced below
-        if (rC + nR >= LIST_CAP.R) { S.log(`  CAP: dropped BUY R (rifles ${rC})`); return false; }
-        if (!bt && !TH && tC < 2 && bkC >= tPx - 25 && bkC < tPx && (6 - act) >= 1 && rC >= 3) { S.log(`  SAVE for tank T${t} (b${bkC})`); return false; }   // a tank is a few seconds away
+        if (!swapped && !TH && tC < S.K.tankFloor && tb && tb.price <= bkC) { swapped = 1; return true; }   // replaced below
+        if (rC + nR >= S.caps.R) { S.log(`  CAP: dropped BUY R (rifles ${rC})`); return false; }
+        if (!bt && !TH && tC < S.K.tankFloor && bkC >= tPx - 25 && bkC < tPx && (6 - act) >= 1 && rC >= 3) { S.log(`  SAVE for tank T${t} (b${bkC})`); return false; }   // a tank is a few seconds away
         nR++; return true;
       });
       if (swapped) { const i = ord.indexOf('BUY R'); ord[i] = 'BUY T'; ord = ord.map(x => (x === 'DEPLOY R' ? 'DEPLOY T' : x)); }
       const abNow = g1(l, /\bauto ([A-Z]+)/);
-      if (rC >= LIST_CAP.R) {
+      if (rC >= S.caps.R) {
         ord = ord.filter(x => x !== 'AUTOBUY R');
-        if (abNow === 'T' && S.capAB && tC >= 2) ord.unshift('AUTOBUY OFF');
-        else if (abNow === 'R') { ord.unshift(tC < 2 ? 'AUTOBUY T' : 'AUTOBUY OFF'); S.capAB = 1; S.log(`  CAP: autobuy R off at ${rC} rifles`); }
-      } else if (S.capAB && rC <= LIST_CAP.R - 2 && abNow !== 'R') { ord.unshift('AUTOBUY R'); S.capAB = 0; }
+        if (abNow === 'T' && S.capAB && tC >= S.K.tankFloor) ord.unshift('AUTOBUY OFF');
+        else if (abNow === 'R') { ord.unshift(tC < S.K.tankFloor ? 'AUTOBUY T' : 'AUTOBUY OFF'); S.capAB = 1; S.log(`  CAP: autobuy R off at ${rC} rifles`); }
+      } else if (S.capAB && rC <= S.caps.R - 2 && abNow !== 'R') { ord.unshift('AUTOBUY R'); S.capAB = 0; }
     }
     // Never leave 40+ CR unspent with a free field slot: add a buy-list pick (or the cheapest fit) and deploy it.
     { const bkF = V.bank === '' ? 0 : +V.bank;
       if (act < 6 && !mw0 && bkF >= S.K.spendGuardCR && !ord.some(x => /^BUY /.test(x))) {
-        const u = listPick(V, 6 - act, bkF, { noD: true, tankHot: TH, noR: RC }) || ['R', 'O', 'M', 'S'].filter(k => !(k === 'R' && RC)).find(k => { const b = V.buy.find(x => x.u === k); return b && b.price <= bkF && (k !== 'S' || 6 - act >= 3); });
+        const u = listPick(V, 6 - act, bkF, { ...LO, noD: true, tankHot: TH, noR: RC }) || ['R', 'O', 'M', 'S'].filter(k => !(k === 'R' && RC) && !(k === 'S' && (SD || S.caps.S < 3))).find(k => { const b = V.buy.find(x => x.u === k); return b && b.price <= bkF && (k !== 'S' || 6 - act >= 3); });
         if (u) { ord = ord.filter(x => x !== 'DEPLOY ALL'); ord.unshift(`BUY ${u}`, 'DEPLOY ALL'); S.log(`  SPEND T${t}: b${bkF} free ${6 - act} -> BUY ${u}`); } } }
     // Lesson medicByT: the opening medic must be on the field by T<medicByT>; buy and deploy one in the 30 s before the deadline (once).
     { const md = S.K.medicByT, bkM = V.bank === '' ? 0 : +V.bank, mb = V.buy.find(b => b.u === 'M');
       if (md > 0 && !S.medForced && !bt && t >= Math.max(0, md - 30) && t <= md + 60 && act < 6 && !/\bM\d+@/.test(V.f) && !/\d+M\b/.test(V.resAll) && mb && mb.price <= bkM) {
         ord = ord.filter(x => !/^(BUY|DEPLOY) /.test(x)); ord.unshift('BUY M', 'DEPLOY ALL'); S.medForced = 1; S.log(`  LESSON medic by T${md}: BUY M at T${t}`); } }
+    // caps + churn guard on every path (fallbacks, mortar-keep, raid): drop BUY S/D/O/M/T over the lesson caps
+    { const om = ownMix(V.f, V.res === 'none' ? '' : V.resAll); const add = { S: 3, D: 3 }; const seen = {};
+      ord = ord.filter(x => { const m = /^BUY ([SDOMT])$/.exec(x); if (!m) return true; const u = m[1]; if ((u === 'S' || u === 'D') && SD) { S.log(`  LESSON churn: dropped BUY ${u} (${S.sdbuys.length} in 60 s)`); return false; }
+        const nn = (om[u] || 0) + (seen[u] || 0) + (add[u] || 1); if (nn > S.caps[u] && !(u === 'T' && (om.T || 0) < S.K.tankFloor)) { S.log(`  LESSON cap: dropped BUY ${u} (cap ${S.caps[u]})`); return false; } seen[u] = (seen[u] || 0) + (add[u] || 1); return true; }); }
     if (RC) { const n0 = ord.length; ord = ord.filter(x => x !== 'BUY R'); if (ord.length < n0) S.log(`  LESSON rifle rate: dropped BUY R (${S.rbuys.length} in 60 s)`); }
     // Autobuy defers to the buy list: turn it off once, drop the loop's own AUTOBUY R/T toggles (commander RESERVE orders stay).
     { const abNow = g1(l, /\bauto ([A-Z]+)/); ord = ord.filter(x => !/^AUTOBUY (R|T|O|M|S|D)$/.test(x));
@@ -278,6 +287,7 @@ class Play {
     if (results.some(r => /^OK BUY M/.test(r))) { let mw = (S.medicWant ?? 1) - 1; S.mbank = 0; S.log(`  MEDIC bought T${S._t}, ${mw} left`); if (mw <= 0) { S.medicWant = null; S.mdone = 1; } else S.medicWant = mw; }
     if (results.some(r => /^OK BANK/.test(r))) S.mbank = 1;
     for (const r of results) if (/^OK BUY R$/.test(r)) S.rbuys.push(S._t || 0);
+    for (const r of results) if (/^OK BUY [SD]$/.test(r)) S.sdbuys.push(S._t || 0);
     for (const r of results) { const m = r.match(/^ERR ASSIST z(\d+)[^:]*: no enemy/) || r.match(/^ERR ASSIST z(\d+) no_enemy/); if (m) { S.asb[+m[1]] = S._t; break; } }
   }
 }
