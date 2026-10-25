@@ -4,15 +4,16 @@
 // Overfitting guards (each logs why it allowed or blocked):
 //  (a) step: a set moves at most TUNABLES[k].step toward the target per match
 //  (b) evidence: the mistake behind the key must show in >= 2 of the last 3 matches, unless severe (last match lost with the base destroyed and that mistake seen)
-//  (c) judging: a trial is kept or reverted on a rolling window (3 matches after vs up to 3 before: wins, then mean base HP), never one result
+//  (c) judging: a trial is kept or reverted on a rolling window (3 matches after vs up to 3 before: wins, then mean base HP), never one result.
+//      KEEP needs >= 2 'before' matches. With a thinner baseline the trial is extended to 6 matches and then kept only if it won at least half.
 //  (d) cooldown: a reverted key can't be set again for 3 matches
 //  (e) drift: a key off its default with no evidence and no set for 5 matches steps back toward the default
 //  (f) at most 3 keys changed per match
 // usage: node tools/lesson.js summary [--log f] | set <key> <value> [<key> <value> ...] --why "..." | record [--log f] | status | list
 'use strict';
 const fs = require('fs'), path = require('path');
-const L = require('./v7node/lessons'); const T = L.TUNABLES;
-const WIN = 3, COOLDOWN = 3, DRIFT = 5, MAXSETS = 3;
+const L = require('./v7node/lessons'); const T = L.TUNABLES; const PLAY = require('./v7node/play');
+const WIN = 3, MINBEFORE = 2, LOOP_GAP = 20, COOLDOWN = 3, DRIFT = 5, MAXSETS = 3;
 const histFile = () => path.join(path.dirname(L.file()), 'lessons-history.json');
 const stamp = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const log = s => { const f = L.logFile(); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.appendFileSync(f, `${stamp()} | ${s}\n`); console.log(s); };
@@ -42,7 +43,12 @@ function digest(M, K = L.load()) {
   const lost = {}, elost = {};
   for (const r of M.reports) { const ev = (r.l.split('|')[1] || ''); for (const [re, o] of [[/(?:^|\s)L:(\S+)/, lost], [/EL:(\S+)/, elost]]) { const m = ev.match(re); if (m) for (const k of m[1].matchAll(/([A-Z])(\d+)/g)) o[k[1]] = (o[k[1]] || 0) + +k[2]; } }
   const banks = M.reports.map(r => ({ t: r.t, b: +((r.l.match(/\| buy b(\d+)/) || [])[1] || 0), a: +((r.l.match(/act (\d)/) || [])[1] ?? 6) }));
-  const idle = banks.filter(x => x.a < 6 && x.b >= K.spendGuardCR).length;
+  // idle-credits uses play.js's own test (free slot, bank >= spendGuardCR, an offered unit fits) and only counts reports the loop answered with no accepted BUY
+  const buyT = new Set(M.buys.map(b => b.t)); let px = {}; let idle = 0;
+  for (const r of M.reports) { const pm = r.l.match(/\| px ([^|]+)/); if (pm) for (const m of pm[1].matchAll(/([A-Z])(\d+)/g)) px[m[1]] = +m[2];
+    if (!/ (END|READY) /.test(r.l) && PLAY.idleEligible(r.l, K.spendGuardCR, px) && !buyT.has(r.t)) idle++; }
+  // loop-down: a gap of > LOOP_GAP match-seconds between reports we received means the Play Loop stopped polling (the arena autopilot played Green)
+  const gaps = []; for (let i = 1; i < M.reports.length; i++) { const a = M.reports[i - 1].t, b = M.reports[i].t; if (b - a > LOOP_GAP) gaps.push({ from: a, to: b }); }
   const medT = (M.reports.find(r => /\| f [^|]*\bM\d+@/.test(r.l)) || {}).t;
   const zs = M.reports.map(r => r.l.match(/\| z (\d+)\/(\d+)/)).filter(Boolean); const zMax = zs.length ? Math.max(...zs.map(z => +z[1])) : 0;
   const ahead = M.reports.filter(r => /\| ahead/.test(r.l)).length;
@@ -59,13 +65,14 @@ function digest(M, K = L.load()) {
   if (idle >= 3) tags.push({ id: 'idle-credits', keys: ['spendGuardCR'], why: `${idle} reports with ${K.spendGuardCR}+ CR and a free slot` });
   if (medT === undefined || medT > 90) tags.push({ id: 'medic-late', keys: ['medicByT', 'capMedic'], why: medT === undefined ? 'no medic fielded' : `first medic on field T${medT}` });
   if (ahead >= 8 && zMax < 6 && !win) tags.push({ id: 'no-push', keys: ['pushMargin'], why: `ahead in ${ahead} reports, never held z6` });
+  if (gaps.length) tags.push({ id: 'loop-down', keys: [], why: 'Play Loop down at ' + gaps.map(g => `T${g.from}-T${g.to}`).join(', ') + ' (arena autopilot played Green; report only)' });
   const severe = !win && /base destroyed/.test(cause);
   // cost = units lost tied to the mistake; idle-credits converts conservatively (4 idle reports ~ 1 unit) so it can't outrank real losses
-  const COST = { 'scout-churn': lost.S || 0, 'drone-churn': lost.D || 0, 'rifle-churn': lost.R || 0, 'tank-feed': 2 * (lost.T || 0), 'idle-credits': Math.floor(idle / 4), 'medic-late': lost.M || 0, 'no-push': 0 };
+  const COST = { 'scout-churn': lost.S || 0, 'drone-churn': lost.D || 0, 'rifle-churn': lost.R || 0, 'tank-feed': 2 * (lost.T || 0), 'idle-credits': Math.floor(idle / 4), 'medic-late': lost.M || 0, 'no-push': 0, 'loop-down': 0 };
   for (const t of tags) t.cost = COST[t.id] || 0;
   const top = Math.max(0, ...tags.map(t => t.cost)); const severeTags = severe && top > 0 ? tags.filter(t => t.cost === top).map(t => t.id) : [];
   const id = require('crypto').createHash('sha1').update(end + '|' + M.reports.length + '|' + M.buys.length).digest('hex').slice(0, 10);
-  return { id, win, hp, tEnd, cause, severe, severeTags, buys, units, lost, elost, endBank: banks.length ? banks[banks.length - 1].b : 0, maxBank: Math.max(0, ...banks.map(x => x.b)), idle, medT, zMax, zEnd: zs.length ? `${zs[zs.length - 1][1]}/${zs[zs.length - 1][2]}` : '-', tags };
+  return { id, win, hp, tEnd, cause, severe, severeTags, buys, units, lost, elost, endBank: banks.length ? banks[banks.length - 1].b : 0, maxBank: Math.max(0, ...banks.map(x => x.b)), idle, gaps, medT, zMax, zEnd: zs.length ? `${zs[zs.length - 1][1]}/${zs[zs.length - 1][2]}` : '-', tags };
 }
 const fmtMix = o => Object.entries(o).map(([k, v]) => `${v}${k}`).join(' ') || 'none';
 function printSummary(D, H, K) {
@@ -75,8 +82,9 @@ function printSummary(D, H, K) {
   out.push(`lost: ${fmtMix(D.lost)} | killed: ${fmtMix(D.elost)}`);
   out.push(`credits: end ${D.endBank}, max ${D.maxBank}, idle reports ${D.idle} | first medic ${D.medT === undefined ? 'never' : 'T' + D.medT}`);
   out.push('mistakes: ' + (D.tags.length ? D.tags.map(t => `${t.id} (${t.why}; cost ${t.cost}) -> ${t.keys.join('|')}`).join('; ') : 'none flagged') + (D.severe ? ` [SEVERE: base lost; exception only for ${D.severeTags.join('/') || 'none'}]` : ''));
+  if (D.gaps && D.gaps.length) out.push('PLAY LOOP DOWN at ' + D.gaps.map(g => `T${g.from}-T${g.to}`).join(', ') + ' (no reports read; arena autopilot played Green)');
   const ev = evidence(H, D);
-  for (const t of D.tags) out.push(`  ${t.id}: seen in ${ev[t.id] || 0}/${Math.min(WIN, H.matches.length + (D.recorded ? 0 : 1))} recent matches`);
+  for (const t of D.tags.filter(x => x.keys.length)) out.push(`  ${t.id}: seen in ${ev[t.id] || 0}/${Math.min(WIN, H.matches.length + (D.recorded ? 0 : 1))} recent matches`);
   out.push('tunables: ' + Object.keys(T).map(k => `${k}=${K[k]}${K[k] !== T[k].def ? '*' : ''}`).join(' '));
   out.push('trials: ' + (Object.keys(H.trials).length ? Object.entries(H.trials).map(([k, tr]) => `${k} ${tr.prev}->${tr.value} since match ${tr.start + 1} (${H.matches.length - tr.start}/${WIN} judged)`).join('; ') : 'none'));
   const cd = Object.entries(H.cooldown).filter(([, n]) => n > H.matches.length).map(([k, n]) => `${k} until match ${n + 1}`); if (cd.length) out.push('cooldown: ' + cd.join(', '));
@@ -118,12 +126,13 @@ function record(D, o = {}) {
   if (D.id && H.matches.length && H.matches[H.matches.length - 1].id === D.id) { console.log(`match ${D.id} already recorded`); return { H, lines: [] }; }
   H.matches.push({ id: D.id, n: H.matches.length + 1, at: stamp(), win: D.win, hp: D.hp, t: D.tEnd, severe: D.severe, severeTags: D.severeTags || [], tags: D.tags.map(t => t.id) }); const n = H.matches.length;
   for (const t of D.tags) for (const k of t.keys) if (H.trials[k] || L.load()[k] !== T[k].def) H.justified[k] = n;
-  const lines = [`MATCH ${n} ${D.win ? 'won' : 'lost'} T${D.tEnd} hp ${D.hp}${D.tags.length ? ' | mistakes ' + D.tags.map(t => t.id).join(',') : ''}`];
+  const lines = [...(D.gaps && D.gaps.length ? [`PLAY LOOP DOWN at ${D.gaps.map(g => `T${g.from}-T${g.to}`).join(', ')} (arena autopilot played Green)`] : []), `MATCH ${n} ${D.win ? 'won' : 'lost'} T${D.tEnd} hp ${D.hp}${D.tags.length ? ' | mistakes ' + D.tags.map(t => t.id).join(',') : ''}`];
   for (const [k, tr] of Object.entries(H.trials)) {
-    const after = H.matches.slice(tr.start, tr.start + WIN); if (after.length < WIN) { lines.push(`TRIAL ${k} ${tr.prev}->${tr.value}: ${after.length}/${WIN} matches`); continue; }
-    const a = score(after), b = score(tr.before); const r = (a.wins / a.n) - (b.n ? b.wins / b.n : 0);
-    const keep = !b.n || r > 0 || (r === 0 && a.hp >= b.hp);
-    const ev = `after ${a.wins}/${a.n} wins hp ${a.hp} vs before ${b.wins}/${b.n} wins hp ${b.hp} (window ${WIN})`;
+    const b = score(tr.before || []); const thin = b.n < MINBEFORE; const need = thin ? 2 * WIN : WIN;   // (c) thin baseline: extend, don't keep on thin evidence
+    const after = H.matches.slice(tr.start, tr.start + need); if (after.length < need) { lines.push(`TRIAL ${k} ${tr.prev}->${tr.value}: ${after.length}/${need} matches${thin && after.length >= WIN ? ` (extended: only ${b.n} before match${b.n === 1 ? '' : 'es'}, need ${MINBEFORE})` : ''}`); continue; }
+    const a = score(after); const r = (a.wins / a.n) - (b.n ? b.wins / b.n : 0);
+    const keep = thin ? a.wins * 2 >= a.n : r > 0 || (r === 0 && a.hp >= b.hp);
+    const ev = thin ? `after ${a.wins}/${a.n} wins hp ${a.hp}; thin baseline (${b.n} before), kept only on >= half wins` : `after ${a.wins}/${a.n} wins hp ${a.hp} vs before ${b.wins}/${b.n} wins hp ${b.hp} (window ${WIN})`;
     if (keep) lines.push(`KEPT ${k} ${tr.prev}->${tr.value} | ${ev} | why: ${tr.why}`);
     else { const V = L.load(); V[k] = tr.prev; L.save(V); H.cooldown[k] = n + COOLDOWN; lines.push(`REVERTED ${k} ${tr.value}->${tr.prev} | ${ev} | cooldown (d) until match ${n + COOLDOWN + 1}`); }
     delete H.trials[k];
@@ -134,7 +143,7 @@ function record(D, o = {}) {
   if (drift) L.save(V);
   saveH(H); for (const s of lines) log(s); return { H, lines };
 }
-module.exports = { parse, digest, evidence, set, record, loadH, saveH, histFile, WIN, COOLDOWN, DRIFT, MAXSETS };
+module.exports = { parse, digest, evidence, set, record, loadH, saveH, histFile, WIN, MINBEFORE, LOOP_GAP, COOLDOWN, DRIFT, MAXSETS };
 
 if (require.main === module) {
   const a = process.argv.slice(2), arg = (k, d) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : d; };

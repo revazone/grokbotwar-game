@@ -99,6 +99,16 @@ function listPick(V, fr, bank, opts = {}) {
   return best;
 }
 const slotsOf = u => (u === 'S' || u === 'D' ? 3 : 1);
+const SPEND_ORDER = ['R', 'O', 'M', 'T', 'S', 'D'];   // spend-guard fallback, cheapest useful first
+/** Shared with tools/lesson.js (idle-credits): a report is idle-eligible when a field slot is free, bank >= guard, and some offered unit is affordable and fits. */
+function idleEligible(l, guard, px = PX_DEFAULT) {
+  const V = view(l, { ...PX_DEFAULT, ...px }); const act = V.act, bank = V.bank === '' ? 0 : +V.bank;
+  return act < 6 && bank >= guard && V.buy.some(b => b.price <= bank && 6 - act >= slotsOf(b.u));
+}
+// Rule ids (bot/skills/grokbotwar-ttp/SKILL.md lists each; tools/test-ttp-sync.js checks both ways):
+// deploy-reserve, buy-list, medic-first, tank-floor, counter-pick, second-pick, field-full-reserve, mortar-keep, focus-drones,
+// finish-push, zone-push, fall-back, focus-structures, autobuy-scouts, buy-range, regroup, fob-push, scout-raid, commander-notes,
+// medic-want, rifle-cap, save-for-tank, spend-guard, medic-by-t, lesson-caps, rifle-rate, autobuy-off, tank-bank-check, deploy-guard
 
 class Play {
   constructor(o = {}) {
@@ -123,7 +133,7 @@ class Play {
   /** One report in, { acks, post } out. post is what goes on the wire (max 3). */
   decide(l) {
     const px = l.match(/\| px ([^|]+)/); if (px) for (const m of px[1].matchAll(/([A-Z])(\d+)/g)) this.px[m[1]] = +m[2];
-    const V = view(l, this.px); const S = this; const bt = /\| base-threat/.test(l); const mw0 = S.medicWant !== null && !bt;   // medic-want never holds reinforcements while the base is threatened
+    const V = view(l, this.px); const S = this; S._saving = 0; const bt = /\| base-threat/.test(l); const mw0 = S.medicWant !== null && !bt;   // medic-want never holds reinforcements while the base is threatened
     let ord = [];
     const act = V.act, res = V.res;
     const tw = / gun G/.test(l) ? 1 : 0;
@@ -238,7 +248,7 @@ class Play {
         if (x !== 'BUY R') return true;
         if (!swapped && !TH && tC < S.K.tankFloor && tb && tb.price <= bkC) { swapped = 1; return true; }   // replaced below
         if (rC + nR >= S.caps.R) { S.log(`  CAP: dropped BUY R (rifles ${rC})`); return false; }
-        if (!bt && !TH && tC < S.K.tankFloor && bkC >= tPx - 25 && bkC < tPx && (6 - act) >= 1 && rC >= 3) { S.log(`  SAVE for tank T${t} (b${bkC})`); return false; }   // a tank is a few seconds away
+        if (!bt && !TH && tC < S.K.tankFloor && bkC >= tPx - 25 && bkC < tPx && (6 - act) >= 1 && rC >= 3) { S._saving = 1; S.log(`  SAVE for tank T${t} (b${bkC})`); return false; }   // a tank is a few seconds away
         nR++; return true;
       });
       if (swapped) { const i = ord.indexOf('BUY R'); ord[i] = 'BUY T'; ord = ord.map(x => (x === 'DEPLOY R' ? 'DEPLOY T' : x)); }
@@ -249,11 +259,6 @@ class Play {
         else if (abNow === 'R') { ord.unshift(tC < S.K.tankFloor ? 'AUTOBUY T' : 'AUTOBUY OFF'); S.capAB = 1; S.log(`  CAP: autobuy R off at ${rC} rifles`); }
       } else if (S.capAB && rC <= S.caps.R - 2 && abNow !== 'R') { ord.unshift('AUTOBUY R'); S.capAB = 0; }
     }
-    // Never leave 40+ CR unspent with a free field slot: add a buy-list pick (or the cheapest fit) and deploy it.
-    { const bkF = V.bank === '' ? 0 : +V.bank;
-      if (act < 6 && !mw0 && bkF >= S.K.spendGuardCR && !ord.some(x => /^BUY /.test(x))) {
-        const u = listPick(V, 6 - act, bkF, { ...LO, noD: true, tankHot: TH, noR: RC }) || ['R', 'O', 'M', 'S'].filter(k => !(k === 'R' && RC) && !(k === 'S' && (SD || S.caps.S < 3))).find(k => { const b = V.buy.find(x => x.u === k); return b && b.price <= bkF && (k !== 'S' || 6 - act >= 3); });
-        if (u) { ord = ord.filter(x => x !== 'DEPLOY ALL'); ord.unshift(`BUY ${u}`, 'DEPLOY ALL'); S.log(`  SPEND T${t}: b${bkF} free ${6 - act} -> BUY ${u}`); } } }
     // Lesson medicByT: the opening medic must be on the field by T<medicByT>; buy and deploy one in the 30 s before the deadline (once).
     { const md = S.K.medicByT, bkM = V.bank === '' ? 0 : +V.bank, mb = V.buy.find(b => b.u === 'M');
       if (md > 0 && !S.medForced && !bt && t >= Math.max(0, md - 30) && t <= md + 60 && act < 6 && !/\bM\d+@/.test(V.f) && !/\d+M\b/.test(V.resAll) && mb && mb.price <= bkM) {
@@ -263,6 +268,17 @@ class Play {
       ord = ord.filter(x => { const m = /^BUY ([SDOMT])$/.exec(x); if (!m) return true; const u = m[1]; if ((u === 'S' || u === 'D') && SD) { S.log(`  LESSON churn: dropped BUY ${u} (${S.sdbuys.length} in 60 s)`); return false; }
         const nn = (om[u] || 0) + (seen[u] || 0) + (add[u] || 1); if (nn > S.caps[u] && !(u === 'T' && (om.T || 0) < S.K.tankFloor)) { S.log(`  LESSON cap: dropped BUY ${u} (cap ${S.caps[u]})`); return false; } seen[u] = (seen[u] || 0) + (add[u] || 1); return true; }); }
     if (RC) { const n0 = ord.length; ord = ord.filter(x => x !== 'BUY R'); if (ord.length < n0) S.log(`  LESSON rifle rate: dropped BUY R (${S.rbuys.length} in 60 s)`); }
+    // Spend guard (rule spend-guard): never leave spendGuardCR+ CR (lesson, default 40) unspent with a free field slot. Runs AFTER the cap,
+    // churn and rifle-rate filters so nothing later drops its buy; the fallback only names units that pass those same caps (Oct 23 fix:
+    // it used to pick S past the scout cap, the cap filter dropped it, and the bank sat idle).
+    { const bkF = V.bank === '' ? 0 : +V.bank, free = 6 - act;
+      if (act < 6 && !mw0 && !S._saving && bkF >= S.K.spendGuardCR && !ord.some(x => /^BUY /.test(x))) {
+        const om = ownMix(V.f, V.res === 'none' ? '' : V.resAll);
+        const fits = k => { const b = V.buy.find(x => x.u === k); return !!b && b.price <= bkF && free >= slotsOf(k) && (om[k] || 0) + slotsOf(k) <= S.caps[k] && !(k === 'R' && RC) && !((k === 'S' || k === 'D') && SD); };
+        const lp = listPick(V, free, bkF, { ...LO, noD: true, tankHot: TH, noR: RC });
+        const u = lp && fits(lp) ? lp : SPEND_ORDER.find(fits);
+        if (u) { ord = ord.filter(x => !/^DEPLOY/.test(x)); ord.unshift(`BUY ${u}`, 'DEPLOY ALL'); if (u === 'D') S.lastD = t; S.log(`  SPEND T${t}: b${bkF} free ${free} -> BUY ${u}`); }
+        else S.log(`  SPEND T${t}: b${bkF} free ${free}, nothing affordable fits the caps`); } }
     // Autobuy defers to the buy list: turn it off once, drop the loop's own AUTOBUY R/T toggles (commander RESERVE orders stay).
     { const abNow = g1(l, /\bauto ([A-Z]+)/); ord = ord.filter(x => !/^AUTOBUY (R|T|O|M|S|D)$/.test(x));
       if (abNow && abNow !== 'OFF' && abNow !== 'none' && !S.abOff) { ord.unshift('AUTOBUY OFF'); S.abOff = 1; S.log(`  AUTOBUY OFF T${t}: buy list governs`); } }
@@ -291,4 +307,4 @@ class Play {
     for (const r of results) { const m = r.match(/^ERR ASSIST z(\d+)[^:]*: no enemy/) || r.match(/^ERR ASSIST z(\d+) no_enemy/); if (m) { S.asb[+m[1]] = S._t; break; } }
   }
 }
-module.exports = { listPick, listCtx, counterPick, enemyMix, Play, view };
+module.exports = { idleEligible, slotsOf, SPEND_ORDER, listPick, listCtx, counterPick, enemyMix, Play, view };

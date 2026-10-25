@@ -164,6 +164,8 @@ function startHost({ root, cfg, cfgPath, port, host }) {
   const webhookUrl = process.env.WARRIOR_REPORT_WEBHOOK || '';
   const webhookKey = process.env.WARRIOR_REPORT_WEBHOOK_KEY || '';
   const wakeMinMs = readEnvNumber('WARRIOR_WAKE_MIN_MS', WAKE_MIN_MS);
+  // WARRIOR_REPORT_WEBHOOK_EVENTS=END posts only those events (comma list). Unset posts every wake event.
+  const webhookEvents = (process.env.WARRIOR_REPORT_WEBHOOK_EVENTS || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
   const lastWakeAt = [0, 0];
   const seenReport = new Map();
   let relayBridge = null;
@@ -189,6 +191,7 @@ function startHost({ root, cfg, cfgPath, port, host }) {
     writeProtocol('OUT', rep.match, rep.seat, rep.line);
     if (relayBridge) relayBridge.report(rep);
     if (!webhookUrl) return;
+    if (webhookEvents.length && !webhookEvents.includes(String(rep.event || '').toUpperCase())) return;
     const sinceWake = lastWakeAt[rep.side] ? Date.now() - lastWakeAt[rep.side] : Infinity;
     if (!shouldPostWake(rep.event, sinceWake, wakeMinMs)) return;
     lastWakeAt[rep.side] = Date.now();

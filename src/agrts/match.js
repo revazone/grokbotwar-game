@@ -162,6 +162,12 @@ function addCounts(dst, src) {
 
 // Medic seek (fix/medic-seek): hurt share that draws a medic, how far it looks, and the 'near' radius for odds and allies.
 const MEDIC_SEEK_PCT = 0.15, MEDIC_SEEK_R = 200, MEDIC_NEAR_R = 120;
+// Aggressive medic (medic-aggression, both sides; MEDIC_AGGRO_EMBER=0 brings back Ember's old passive medic; The Range's no-order medic rushes any hurt ally):
+// seek 8%+ hurt allies within 320 px, Breakers weighted 1.5x, skip a patient only when enemies near it outnumber ours by 3+,
+// and with nobody hurt stand MEDIC_FRONT_GAP px behind the frontmost ally instead of half a zone behind the group's rear.
+const MEDIC_AGGRO_PCT = 0.08, MEDIC_AGGRO_R = 320, MEDIC_AGGRO_ODDS = 3, MEDIC_FRONT_GAP = 34;
+const MEDIC_AGGRO_SIDES = [true, process.env.MEDIC_AGGRO_EMBER !== '0'];
+const medicWeight = (v) => (U.roleOf(v.type) === 'armor' ? 1.5 : 1);
 
 class AgrtsMatch extends EventEmitter {
   constructor(opts = {}) {
@@ -1487,6 +1493,31 @@ class AgrtsMatch extends EventEmitter {
     return true;
   }
 
+  /** medic-sprint: an aggressive medic seeking a hurt ally outside heal reach runs at the RUSHING 2.5x (as The Range's no-order medic), re-picked every tick. */
+  _medicSprint(u, g) {
+    if (!MEDIC_AGGRO_SIDES[u.side] || !g || g.why !== 'seek') return;
+    u.medicMode = 'RUSHING'; u.medicTargetId = g.id; u.paceV = null;
+  }
+
+  /** Aggressive ESCORT: MEDIC_FRONT_GAP px behind the frontmost ground ally of the nearest group, or null. */
+  _frontPoint(u) {
+    let near = null, nearD = Infinity;
+    for (const v of this.units) {
+      if (v === u || v.side !== u.side || v.hp <= 0 || !grounded(v) || U.isHealer(v.type)) continue;
+      const d = Math.hypot(v.x - u.x, v.y - u.y);
+      if (d < nearD) { near = v; nearD = d; }
+    }
+    if (!near) return null;
+    const dir = u.side === 0 ? 1 : -1;
+    let front = near;
+    for (const v of this.units) {
+      if (v === u || v.side !== u.side || v.hp <= 0 || !grounded(v) || U.isHealer(v.type)) continue;
+      if (Math.hypot(v.x - near.x, v.y - near.y) > ST.ESCORT_GROUP_R * 2) continue;
+      if ((v.x - front.x) * dir > 0) front = v;
+    }
+    return { x: front.x - dir * MEDIC_FRONT_GAP, y: front.y };
+  }
+
   /** ESCORT: where a healer trails the nearest friendly group (half a zone behind its rear), or null. */
   _escortPoint(u) {
     let near = null, nearD = Infinity;
@@ -1761,6 +1792,7 @@ class AgrtsMatch extends EventEmitter {
     // ESCORT: a healer with nobody to treat trails the nearest group instead of walking at the enemy; alone it falls back (fix/medic-seek).
     if (stance === 'ESCORT' && !medicPatient) {
       const p = this._medicGoal(u, null);
+      this._medicSprint(u, p);
       if (p) {
         if (Math.hypot(p.x - u.x, p.y - u.y) > 10) this._radioMove(u, a, dt, p.x, this._fieldY(p.y), terrain);
         this._zoneHeal(u, dt, zoneCounts);
@@ -2215,9 +2247,10 @@ class AgrtsMatch extends EventEmitter {
     let patient = null;
     if (a.role === 'healer') {
       let missing = 1;
+      const aggro = MEDIC_AGGRO_SIDES[side];
       for (const v of this.units) {
-        if (v === u || v.side !== side) continue;
-        const lost = v.max - v.hp;
+        if (v === u || v.side !== side || (aggro && v.hp <= 0)) continue;
+        const lost = aggro ? (v.max - v.hp >= 1 ? 100 * medicWeight(v) * (v.max - v.hp) / v.max : 0) : v.max - v.hp;
         if (lost > missing && Math.hypot(v.x - u.x, v.y - u.y) < a.healRange) { patient = v; missing = lost; }
       }
     }
@@ -2226,6 +2259,7 @@ class AgrtsMatch extends EventEmitter {
     // Medic plan on a radio order (fix/medic-seek): heal in reach (above) > seek a hurt ally > trail the group > retreat when alone.
     if (a.role === 'healer' && !patient && this._stance(u) === 'ESCORT' && o.kind !== 'fallback' && o.phase !== 'back' && !o.hospReturn) {
       const g = this._medicGoal(u, o.zone);
+      this._medicSprint(u, g);
       if (g && Math.hypot(g.x - u.x, g.y - u.y) > 10) this._radioMove(u, a, dt, g.x, this._fieldY(g.y), terrain);
       return true;
     }
@@ -2696,21 +2730,24 @@ class AgrtsMatch extends EventEmitter {
     const side = u.side, dir = side === 0 ? 1 : -1, zw = W / C.ZONES, R = MEDIC_NEAR_R;
     const near = (x, y, sd) => this.units.filter(v => v.side === sd && v.hp > 0 && v !== u && Math.hypot(v.x - x, v.y - y) < R).length;
     const capX = zone == null ? null : (Math.min(7, Math.max(0, zone + dir)) + (side === 0 ? 1 : 0)) * zw;
+    const aggro = MEDIC_AGGRO_SIDES[side];
+    const pct = aggro ? MEDIC_AGGRO_PCT : MEDIC_SEEK_PCT, seekR = aggro ? MEDIC_AGGRO_R : MEDIC_SEEK_R, odds = aggro ? MEDIC_AGGRO_ODDS : 1;
     let best = null, bestLost = 0;
     for (const v of this.units) {
       if (v === u || v.side !== side || v.hp <= 0 || U.isHealer(v.type)) continue;
       const lost = (v.max - v.hp) / v.max;
-      if (lost < MEDIC_SEEK_PCT || Math.hypot(v.x - u.x, v.y - u.y) > MEDIC_SEEK_R) continue;
+      if (lost < pct || Math.hypot(v.x - u.x, v.y - u.y) > seekR) continue;
       if (capX != null && (v.x - capX) * dir > 0) continue;
-      if (near(v.x, v.y, 1 - side) > near(v.x, v.y, side) + 1) continue;   // +1: the hurt unit itself counts as ours
-      if (lost > bestLost) { best = v; bestLost = lost; }
+      if (near(v.x, v.y, 1 - side) > near(v.x, v.y, side) + odds) continue;   // the hurt unit itself counts as ours
+      const score = aggro ? lost * medicWeight(v) : lost;
+      if (score > bestLost) { best = v; bestLost = score; }
     }
-    if (best) return { x: best.x - dir * 14, y: best.y, why: 'seek' };
-    const p = this._escortPoint(u);
+    if (best) return { x: best.x - dir * 14, y: best.y, why: 'seek', id: best.id };
+    const p = aggro ? this._frontPoint(u) : this._escortPoint(u);
     const hitLately = u.hitAt != null && this.elapsed - u.hitAt < 2;
     const allyClose = this.units.some(v => v !== u && v.side === side && v.hp > 0 && !U.isHealer(v.type) && Math.hypot(v.x - u.x, v.y - u.y) < R);
     if (p && !(hitLately && !allyClose)) {
-      const cap = zone == null ? null : (zone + 0.5) * zw;
+      const cap = zone == null ? null : (zone + (aggro ? (side === 0 ? 1 : 0) : 0.5)) * zw;
       return { x: cap != null && (p.x - cap) * dir > 0 ? cap : p.x, y: p.y, why: 'trail' };
     }
     // Retreat: the nearest safe standing post behind us (never toward the enemy), else our base edge; wait there for new units.
@@ -3451,7 +3488,8 @@ class AgrtsMatch extends EventEmitter {
    */
   _hospitalConsumes(u, a, dt, enemies, terrain) {
     if (!this.fieldHospital || !this.hospitals) return false;
-    if (U.isFlying(u.type) || a.role === 'kamikaze' || a.role === 'healer') {
+    // Medics use the hospital like every other ground unit (medic-hospital); only flyers and drones skip it.
+    if (U.isFlying(u.type) || a.role === 'kamikaze') {
       if (u.hosp) this._hospitalAbort(u);
       return false;
     }

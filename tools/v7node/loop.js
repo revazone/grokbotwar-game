@@ -29,18 +29,25 @@ async function run(o = {}) {
   const say = o.log || (s => console.log(s)); const kv = o.strategyKv != null ? parseKv(o.strategyKv) : {};
   const p = new Play({ ...playOpts(kv), log: say, lessons: o.lessons || LESSONS.load() }); const inj = o.inject === undefined ? (process.env.GBW_INJECT || '/tmp/inject') : o.inject;
   const out = { fmt, strategy: playOpts(kv), reports: [], posts: [], refusals: [], lat: [], result: null }; let since = o.lastId || 0, oid = 1; const q = fmt === 'v7' ? '&v=7' : '';
+  // Silent-autopilot guard: the arena plays Green itself after ~20 match-s without us. Make every failure loud, and log a heartbeat.
+  let lastT = null, fails = 0, lastHb = Date.now(); const HB_MS = +(process.env.GBW_HEARTBEAT_MS || 30000);
   for (;;) {
-    const r = await call(S, `/api/seat/report?since=${since}&wait=30${q}`, `/seat/report?since=${since}&wait=30${q}`, null, 40000).catch(() => null);
-    const j = (r && r.j) || {}; if (!r || r.code !== 200) { await new Promise(z => setTimeout(z, 2000)); continue; }
+    if (Date.now() - lastHb >= HB_MS) { say(`HEARTBEAT play loop alive | last report T${lastT ?? '-'} | reports ${out.reports.length} posts ${out.posts.length}${fails ? ` | ${fails} failed polls in a row` : ''}`); lastHb = Date.now(); }
+    let err = '';
+    const r = await call(S, `/api/seat/report?since=${since}&wait=30${q}`, `/seat/report?since=${since}&wait=30${q}`, null, 40000).catch(e => { err = e.message; return null; });
+    const j = (r && r.j) || {}; if (!r || r.code !== 200) { fails++; say(`LOOP ERROR report poll failed (${r ? 'HTTP ' + r.code : err || 'no response'}), try ${fails}; the arena autopilot takes Green after ~20 s without us`); await new Promise(z => setTimeout(z, 2000)); continue; }
+    if (fails) { say(`LOOP OK report poll back after ${fails} failures`); fails = 0; }
     if (!j.fresh || !j.line || ['STATE', 'WAITING', 'COUNTDOWN', 'ORDER'].includes(j.event)) { if (j.id > since && j.event === 'ORDER') since = j.id; if (j.stop && !j.fresh) { out.result = 'no-match'; break; } continue; }
     since = j.id; const l = j.line; say(`${j.id} ${l}`); out.reports.push(l);
+    { const tn = +((l.match(/ T(\d+)/) || [])[1] || 0); if (lastT !== null && tn - lastT > 20) say(`LOOP ERROR Play Loop down T${lastT}-T${tn}: no report read for ${tn - lastT} match-s (arena autopilot played Green)`); lastT = tn; }
     if (j.event === 'END') { out.result = l; break; }
     if (inj) { try { const t = fs.readFileSync(inj, 'utf8'); if (t.trim()) { fs.writeFileSync(inj, ''); p.inject.push(...t.split('\n').filter(Boolean)); } } catch {} }
-    const a = process.hrtime.bigint(); const d = p.decide(l); const ms = Number(process.hrtime.bigint() - a) / 1e6; out.lat.push(ms);
+    const a = process.hrtime.bigint(); let d; try { d = p.decide(l); } catch (e) { say(`LOOP ERROR decide threw at T${lastT}: ${e.message} (no orders this report)`); continue; } const ms = Number(process.hrtime.bigint() - a) / 1e6; out.lat.push(ms);
     for (const x of d.acks) await call(S, '/api/seat/orders', '/seat/orders', { lines: [x], reportId: since, why: 'ack-commander' }).catch(() => null);
     if (!d.post.length) continue;
     const ids = d.post.map(() => oid++); const lines = fmt === 'v7' ? d.post.map((x, i) => `#${ids[i]} ${x}`) : d.post;
-    const pr = await call(S, '/api/seat/orders', '/seat/orders', { lines, reportId: since, ...(fmt === 'v7' ? { v: 7 } : {}) }).catch(() => null);
+    const pr = await call(S, '/api/seat/orders', '/seat/orders', { lines, reportId: since, ...(fmt === 'v7' ? { v: 7 } : {}) }).catch(e => { say(`LOOP ERROR orders post failed at T${lastT}: ${e.message}`); return null; });
+    if (pr && pr.code !== 200) say(`LOOP ERROR orders post HTTP ${pr.code} at T${lastT}`);
     const results = (pr && pr.j && pr.j.results) || []; const acks = (pr && pr.j && pr.j.acks) || [];
     const mapped = fmt === 'v7' && acks.length ? acks.map(k => { const m = k.match(/^ACK (\d+) (OK|ERR (\S+))/); const ord = d.post[ids.indexOf(+m[1])]; return m[2] === 'OK' ? `OK ${ord}` : `ERR ${ord} ${m[3]}`; }) : results;
     say(`  >> ${lines.join(' ; ')}  <= ${(fmt === 'v7' && acks.length ? acks : results).join(' ; ')}  [${ms.toFixed(3)} ms]`);
@@ -71,4 +78,4 @@ if (require.main === module) (async () => {
       console.log(`IMPROVE started (log ${path.join(sd, 'improve.out')})`);
     }
   }
-})().catch(e => { console.error('loop:', e.message); process.exit(1); });
+})().catch(e => { console.error(`LOOP ERROR fatal: ${e.message} -- Play Loop stopped; the arena autopilot is playing Green`); console.log(`LOOP DOWN fatal: ${e.message}`); process.exit(1); });
