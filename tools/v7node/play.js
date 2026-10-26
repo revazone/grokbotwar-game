@@ -110,6 +110,8 @@ function idleEligible(l, guard, px = PX_DEFAULT) {
 // finish-push, zone-push, fall-back, focus-structures, autobuy-scouts, buy-range, regroup, fob-push, scout-raid, commander-notes,
 // medic-want, rifle-cap, save-for-tank, spend-guard, medic-by-t, lesson-caps, rifle-rate, autobuy-off, tank-bank-check, deploy-guard
 
+// Unit names a commander can say in chat (singular, plural, nicknames) -> buy code and display name.
+const UNIT_WORD = [[/scout|flanker|raider/, 'S', 'scout trio'], [/rifle|trooper|infantry/, 'R', 'rifle'], [/tank|breaker/, 'T', 'tank'], [/mortar|artillery|tube/, 'O', 'mortar'], [/drone/, 'D', 'drone pack']];
 class Play {
   constructor(o = {}) {
     this.S_hz = o.hold || 4; this.zone = this.S_hz; this.S_at = o.assaultT || 318; this.S_pt = 30; this.S_pe = 60; this.S_hp = 0;
@@ -121,8 +123,10 @@ class Play {
   cmdrMap(id, text) {
     const t = text.toLowerCase(); const o = [];
     if (/medic|heal/.test(t)) { this.medicWant = 2; o.push(`ACK ${id} saving for 2 medics, fielding them as slots open`); }
-    else if (/drone/.test(t)) o.push(`ACK ${id} focusing their drones`, 'FOCUS D');
+    else if (/drone/.test(t) && !/buy|more|get|build|field|need|want/.test(t)) o.push(`ACK ${id} focusing their drones`, 'FOCUS D');
     else if (/turret/.test(t)) o.push(`ACK ${id} massing then hitting turret`, 'FOCUS TURRET');
+    else if (UNIT_WORD.some(([re]) => re.test(t)) && !/hold|defend|back|retreat|save|bank|push|attack|press|forward/.test(t)) {   // commander names a unit: buy and field one next (60 s)
+      const [, u, nm] = UNIT_WORD.find(([re]) => re.test(t)); this.wantU = u; this.wantT = null; o.push(`ACK ${id} saving for a ${nm}, fielding it as soon as a slot is open`); }
     else if (/hold|defend|back|retreat/.test(t)) o.push(`ACK ${id} holding the line at z4`, 'MOVE_ALL z4');
     else if (/push|forward|attack|press|base/.test(t)) o.push(`ACK ${id} pressing forward when we are ahead`);
     else if (/save|bank/.test(t)) o.push(`ACK ${id} saving credits for now`, 'AUTOBUY T RESERVE 100');
@@ -279,6 +283,12 @@ class Play {
         const u = lp && fits(lp) ? lp : SPEND_ORDER.find(fits);
         if (u) { ord = ord.filter(x => !/^DEPLOY/.test(x)); ord.unshift(`BUY ${u}`, 'DEPLOY ALL'); if (u === 'D') S.lastD = t; S.log(`  SPEND T${t}: b${bkF} free ${free} -> BUY ${u}`); }
         else S.log(`  SPEND T${t}: b${bkF} free ${free}, nothing affordable fits the caps`); } }
+    // Commander named a unit in chat (cmdrMap): buy it as soon as it is affordable with room for it, else bank (no other buys). Expires after 60 s.
+    if (S.wantU) { const wu = S.wantU, wb = V.buy.find(x => x.u === wu), wp = wb ? wb.price : S.px[wu], bkW = V.bank === '' ? 0 : +V.bank; if (S.wantT == null) S.wantT = t;   // the buy list only names affordable units, so an unaffordable one is priced from px
+      if (!wp || t - S.wantT > 60) { S.log(`  WANT ${wu} dropped T${t}: ${wp ? 'expired' : 'no price'}`); S.wantU = null; }
+      else if (!bt) {
+        if (wb && wp <= bkW && 6 - act >= slotsOf(wu)) { ord = ord.filter(x => !/^(BUY|DEPLOY) /.test(x)); ord.unshift(`BUY ${wu}`, 'DEPLOY ALL'); if (wu === 'D') S.lastD = t; S.log(`  WANT T${t}: BUY ${wu}`); }
+        else { ord = ord.filter(x => !/^BUY /.test(x)); S._saving = 1; } } }
     // Autobuy defers to the buy list: turn it off once, drop the loop's own AUTOBUY R/T toggles (commander RESERVE orders stay).
     { const abNow = g1(l, /\bauto ([A-Z]+)/); ord = ord.filter(x => !/^AUTOBUY (R|T|O|M|S|D)$/.test(x));
       if (abNow && abNow !== 'OFF' && abNow !== 'none' && !S.abOff) { ord.unshift('AUTOBUY OFF'); S.abOff = 1; S.log(`  AUTOBUY OFF T${t}: buy list governs`); } }
@@ -300,6 +310,7 @@ class Play {
   /** Results for the last post, as "OK <order>" / "ERR <order>: reason" (v6) or mapped from ACK id lines (v7). */
   onResults(results) {
     const S = this;
+    if (S.wantU && results.some(r => r === `OK BUY ${S.wantU}`)) { S.log(`  WANT ${S.wantU} bought T${S._t}`); S.wantU = null; }
     if (results.some(r => /^OK BUY M/.test(r))) { let mw = (S.medicWant ?? 1) - 1; S.mbank = 0; S.log(`  MEDIC bought T${S._t}, ${mw} left`); if (mw <= 0) { S.medicWant = null; S.mdone = 1; } else S.medicWant = mw; }
     if (results.some(r => /^OK BANK/.test(r))) S.mbank = 1;
     for (const r of results) if (/^OK BUY R$/.test(r)) S.rbuys.push(S._t || 0);
