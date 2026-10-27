@@ -78,6 +78,8 @@ function slimAgrts(st) {
     // TOWERS=1 only (src/agrts/towers.js): gun towers and depots, the base shield flags, the last 2 s of Team HP events, tie-break points.
     ...(st.towersOn ? { towersOn: true, timeLimit: st.timeLimit, teamHpFloor: st.teamHpFloor, towers: st.towers || [], shield: st.shield || [false, false], hpEvents: st.hpEvents || [], towerPts: st.towerPts || [0, 0] } : {}),
     units: st.units || [],
+    // Land mines (docs/MINES.md): Green's always, Ember's only once spotted. The watch page draws the same subset; filtering here keeps unspotted enemy mines off the public relay.
+    mines: (st.mines || []).filter(m => m.side === 0 || m.spotted),
     shots: (st.shots || []).map(s => ({ x: r1(s.x), y: r1(s.y), tx: r1(s.tx), ty: r1(s.ty), type: s.type, side: s.side, col: s.col, life: r1(s.life), maxLife: s.maxLife, ...(s.arc ? { arc: true } : {}) })),
     sparks: (st.sparks || []).map(p => ({ x: r1(p.x), y: r1(p.y), life: r1(p.life), col: p.col })),
     combatFx: st.combatFx || [], spawnFx: st.spawnFx || [], capturePulses: st.capturePulses || [],

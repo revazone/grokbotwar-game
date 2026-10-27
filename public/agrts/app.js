@@ -172,6 +172,7 @@
       cssW, cssH, dpr, w: W, h: H, land, walls, rough, hp, elapsed,
       units, shots, sparks, combatFx, spawnFx, capturePulses, spendPulses, healPopups, cameraShake,
       unitTable: state.unitTable, turrets: state.turrets || [], hospitals: state.hospitals || [],
+      mines: state.mines || [],   // docs/MINES.md: paint() draws Green's and spotted Ember's
       towersOn: state.towersOn, towers: state.towers, shield: state.shield, hpEvents: state.hpEvents, towerPts: state.towerPts, timeLimit: state.timeLimit,
     });
   }
