@@ -25,7 +25,7 @@
     { id: 'medic', name: 'Medic', desc: 'Light support with staying power.', color: '#a9c7ff', draft: 24, live: 36, hp: 34, dmg: 3, range: 58, maxAlive: 0 },
     { id: 'drone', name: 'Drone', desc: 'Fast suicide unit, splash on impact.', color: '#e59cff', draft: 10, live: 20, hp: 7, dmg: 36, range: 30, maxAlive: 4 },
     { id: 'mortar', name: 'Mortar', desc: 'Slow tube. Shells past rifle range, over walls.', color: '#e6c36a', draft: 26, live: 44, hp: 28, dmg: 14, range: 188, maxAlive: 0 },
-    { id: 'mine', name: 'Mine', desc: 'Land mine pack x3. Laid hidden at your front line, arms in 3s, blasts enemy ground units that step close. Drones fly over.', color: '#c9b27a', draft: 18, live: 36, hp: 1, dmg: 30, range: 20, maxAlive: 3 },
+    { id: 'mine', name: 'Mine', desc: 'Land mine pack x3. Laid hidden at your front line, arms in 3s, destroys the enemy ground unit that touches it and blasts those nearby. Drones fly over.', color: '#c9b27a', draft: 18, live: 36, hp: 1, dmg: 30, range: 20, maxAlive: 3 },
   ];
   const DRAFT_COST = Object.fromEntries(FALLBACK_UNITS.map(u => [u.id, u.draft]));
   const NOTE_MAX = 200;

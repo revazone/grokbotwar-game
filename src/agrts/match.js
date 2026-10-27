@@ -57,6 +57,9 @@ const MINE_ARM_S = 3;
 const MINE_SPOT_SCOUT = 60;
 const MINE_SPOT_AIR = 40;
 const MINE_CLEAR_S = 1.5;
+// Touch kill (docs/MINES.md): an armed mine goes off when an enemy GROUND unit's center comes within MINE_TOUCH px (+ half its hull radius);
+// that toucher is destroyed outright at any health, and the normal splash hits its neighbors.
+const MINE_TOUCH = 12;
 const MINE_R = 6, MINE_PAD = 4, MINE_STEP = 8, MINE_SLIDE = 40, MINE_GAP = 16; // mine footprint and the clearance it keeps from a structure footprint (placement check)
 // Drones are launch and forget (docs/DRONE.md): on its first step a kamikaze unit picks one enemy
 // (see _droneLaunchPick), locks that unit's id and flies at it until it hits or dies. It never holds,
@@ -1771,8 +1774,15 @@ class AgrtsMatch extends EventEmitter {
     const { x, y } = p;
     this.mines[side].push({ id: this.nextId++, side, type: k, x, y, zone, arm: MINE_ARM_S, spotted: false, clear: 0 });
     this.mineStats[side].laid++;
-    this.combatFx.push({ x, y, t: 0, life: 0.5, kind: 'mine-lay', side, col: t.color, r: 8 });
+    // Lay pulse (drawn by the page, Green's only) and laidAt: Ember's lay never reaches the frame, so its unspotted mines stay hidden.
+    this.mines[side][this.mines[side].length - 1].laidAt = this.elapsed;
+    if (side === 0) this.combatFx.push({ x, y, t: 0, life: 1.4, kind: 'mine-lay', side, col: '#bafc82', r: 34 });
     if (this.mines[side].length === 1 || (this.reserve[side][k] | 0) === 0) this._log(`${TEAM[side].log} mines laid · z${zone + 1}`, side);
+    // On-screen "Mines laid · zN" notice (the spend-flash box), once per finished pack, Green only.
+    if (side === 0 && (this.mineStats[side].laid % 3 === 0 || (this.reserve[side][k] | 0) === 0)) {
+      this.notices.push({ id: this.noticeId++, side, kind: 'mines', zone: zone + 1, count: this.mines[side].filter(m => m.zone === zone).length });
+      if (this.notices.length > 6) this.notices.shift();
+    }
     return true;
   }
 
@@ -1805,19 +1815,27 @@ class AgrtsMatch extends EventEmitter {
         m.clear = spotter ? m.clear + dt : 0;
         if (m.clear >= MINE_CLEAR_S) { m.gone = true; this.mineStats[s].cleared++; this._log(`${TEAM[1 - s].log} clears a mine · z${m.zone + 1}`, 1 - s); continue; }
         if (m.arm > 0) continue;
-        const trig = foes.find(v => !U.isFlying(v.type) && Math.hypot(v.x - m.x, v.y - m.y) <= a.range + TYPES[v.type].r * 0.5);
-        if (trig) this._mineBlast(m, a);
+        const trig = foes.find(v => !U.isFlying(v.type) && Math.hypot(v.x - m.x, v.y - m.y) <= MINE_TOUCH + TYPES[v.type].r * 0.5);
+        if (trig) this._mineBlast(m, a, trig);
       }
       this.mines[s] = list.filter(m => !m.gone);
     }
   }
 
-  _mineBlast(m, a) {
+  _mineBlast(m, a, toucher) {
     m.gone = true;
     const R = a.splash, center = a.dmg * this.dmgScale;
     let k = 0, kills = 0;
+    // Touch kill: the enemy ground unit that set it off dies outright (any health); neighbors take the normal splash below.
+    if (toucher && toucher.hp > 0 && toucher.side !== m.side && !U.isFlying(toucher.type)) {
+      toucher.hp = 0; toucher.hitAt = this.elapsed; toucher.hitFlash = 0.22; k++; kills++;
+      this.mineStats[m.side].touchKills = (this.mineStats[m.side].touchKills | 0) + 1;
+      this.combatFx.push({ x: toucher.x, y: toucher.y, t: 0, life: 0.9, kind: 'mine-kill', side: m.side, col: '#ffffff', r: 26 });
+      this._sparks(toucher.x, toucher.y, '#fff2a8', 18);
+      this._log(`${TEAM[m.side].log} MINE destroys ${TYPES[toucher.type].name || toucher.type} · z${m.zone + 1}`, m.side);
+    }
     for (const v of this.units) {
-      if (v.side === m.side || v.hp <= 0 || U.isFlying(v.type)) continue;
+      if (v === toucher || v.side === m.side || v.hp <= 0 || U.isFlying(v.type)) continue;
       const t = TYPES[v.type], d = Math.hypot(v.x - m.x, v.y - m.y);
       if (d > R + t.r * 0.5) continue;
       const dmg = center * (1 - a.falloff * Math.min(1, d / R)) * (1 - (t.blastResist || 0));
@@ -1829,7 +1847,7 @@ class AgrtsMatch extends EventEmitter {
     const st = this.mineStats[m.side]; st.blasts++; st.hits += k; st.kills += kills;
     this.combatFx.push({ x: m.x, y: m.y, t: 0, life: 0.6, kind: 'mine', col: a.color, r: R });
     this._sparks(m.x, m.y, a.color, 12);
-    this.cameraShake = Math.max(this.cameraShake, 0.2);
+    this.cameraShake = Math.max(this.cameraShake, toucher ? 0.35 : 0.2);
     this._log(`${TEAM[m.side].log} MINE hits z${m.zone + 1} · ${k} unit${k === 1 ? '' : 's'}`, m.side);
   }
 
@@ -5713,7 +5731,7 @@ class AgrtsMatch extends EventEmitter {
       // Gun towers and depots (TOWERS=1). Hospitals stay in `hospitals`. aim is the target point while it has one.
       ...(this.tw.on ? { towers: this._towerFrames(r1) } : {}),
       // Land mines: every mine, `spotted` true once the enemy saw it. The page draws Green's always, Ember's only spotted (docs/MINES.md).
-      mines: (this.mines || [[], []]).flat().map(m => ({ id: m.id, side: m.side, x: r1(m.x), y: r1(m.y), zone: m.zone, armed: m.arm <= 0, spotted: !!m.spotted })),
+      mines: (this.mines || [[], []]).flat().map(m => ({ id: m.id, side: m.side, x: r1(m.x), y: r1(m.y), zone: m.zone, armed: m.arm <= 0, spotted: !!m.spotted, ...(m.side === 0 && m.laidAt != null ? { laidAt: r1(m.laidAt) } : {}) })),
       units: this.units.map(u => ({
         id: u.id, tag: this._tagOf(u), side: u.side, type: u.type, x: r1(u.x), y: r1(u.y), hp: r1(u.hp), max: u.max,
         facingX: u.facingX || 0, facingY: u.facingY || 0, guard: !!u.guard, medicMode: u.medicMode || '',

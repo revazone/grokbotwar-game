@@ -128,8 +128,8 @@
       seenNotice = notice.id;
       const box = $('spend-flash');
       box.style.setProperty('--spend-color', notice.side === 0 ? '#bafc82' : '#ff7768');
-      $('spend-title').textContent = `${notice.side === 0 ? 'GREEN' : 'EMBER'} · −${notice.amount} CREDITS`;
-      $('spend-detail').textContent = `${notice.names} ADDED TO RESERVE`;
+      if (notice.kind === 'mines') { $('spend-title').textContent = `MINES LAID · Z${notice.zone}`; $('spend-detail').textContent = `${notice.count} MINES · ARMING 3 S`; }
+      else { $('spend-title').textContent = `${notice.side === 0 ? 'GREEN' : 'EMBER'} · −${notice.amount} CREDITS`; $('spend-detail').textContent = `${notice.names} ADDED TO RESERVE`; }
       box.classList.remove('show'); void box.offsetWidth; box.classList.add('show');
     }
   }
