@@ -99,7 +99,7 @@ function listPick(V, fr, bank, opts = {}) {
   return best;
 }
 const slotsOf = u => (u === 'S' || u === 'D' ? 3 : u === 'L' ? 0 : 1);   // mines take no field slot (docs/MINES.md)
-const SPEND_ORDER = ['L', 'R', 'O', 'M', 'T', 'S', 'D'];   // spend-guard fallback: a mine pack first when none is out (arena cap 3, lesson capMinePacks), then cheapest useful
+const SPEND_ORDER = ['R', 'O', 'M', 'T', 'S', 'D'];   // spend-guard fallback, cheapest useful first. No L: mines come only from the mine rule (lesson mineByT), laid in the hold zone
 /** Shared with tools/lesson.js (idle-credits): a report is idle-eligible when a field slot is free, bank >= guard, and some offered unit is affordable and fits. */
 function idleEligible(l, guard, px = PX_DEFAULT) {
   const V = view(l, { ...PX_DEFAULT, ...px }); const act = V.act, bank = V.bank === '' ? 0 : +V.bank;
@@ -108,7 +108,7 @@ function idleEligible(l, guard, px = PX_DEFAULT) {
 // Rule ids (bot/skills/grokbotwar-ttp/SKILL.md lists each; tools/test-ttp-sync.js checks both ways):
 // deploy-reserve, buy-list, medic-first, tank-floor, counter-pick, second-pick, field-full-reserve, mortar-keep, focus-drones,
 // finish-push, zone-push, fall-back, focus-structures, autobuy-scouts, buy-range, regroup, fob-push, scout-raid, commander-notes,
-// medic-want, rifle-cap, save-for-tank, spend-guard, medic-by-t, lesson-caps, rifle-rate, autobuy-off, tank-bank-check, deploy-guard
+// medic-want, rifle-cap, save-for-tank, spend-guard, medic-by-t, lesson-caps, rifle-rate, autobuy-off, tank-bank-check, deploy-guard, mine-hold
 
 // Unit names a commander can say in chat (singular, plural, nicknames) -> buy code and display name.
 const UNIT_WORD = [[/scout|flanker|raider/, 'S', 'scout trio'], [/rifle|trooper|infantry/, 'R', 'rifle'], [/tank|breaker/, 'T', 'tank'], [/mortar|artillery|tube/, 'O', 'mortar'], [/drone/, 'D', 'drone pack'], [/\bmines?\b|land ?mine/, 'L', 'mine pack']];
@@ -283,11 +283,18 @@ class Play {
         const u = lp && fits(lp) ? lp : SPEND_ORDER.find(fits);
         if (u) { ord = ord.filter(x => !/^DEPLOY/.test(x)); ord.unshift(`BUY ${u}`, 'DEPLOY ALL'); if (u === 'D') S.lastD = t; S.log(`  SPEND T${t}: b${bkF} free ${free} -> BUY ${u}`); }
         else S.log(`  SPEND T${t}: b${bkF} free ${free}, nothing affordable fits the caps`); } }
+    // Mine rule (lesson mineByT, cap capMinePacks): once per match, after the opening medic is out, when we hold our hold zone and the
+    // bank covers a pack with nothing else bought this report: MINE z<hold> buys a pack and lays it in that zone (owned, behind the fight),
+    // not at the contested front where Ember's scouts/drones clear it at once (match 7: BUY L at T24 went to contested z5 and was gone unseen).
+    { const md = S.K.mineByT, bkM = V.bank === '' ? 0 : +V.bank, pxL = S.px.L || 36, zG = +((l.match(/\| z (\d+)\//) || [])[1] || 0);
+      const medOk = /\bM\d+@/.test(V.f) || /\d+M\b/.test(V.resAll) || !!S.mdone;
+      if (md > 0 && S.caps.L >= 3 && !S.mineDone && !bt && !mw0 && !S._saving && t >= md && zG >= S.S_hz && medOk && act >= 4 && bkM >= pxL
+          && V.buy.some(b => b.u === 'L') && !ord.some(x => /^(BUY|MINE) /.test(x))) { ord.unshift(`MINE z${S.S_hz}`); S.log(`  MINE T${t}: b${bkM} -> MINE z${S.S_hz} (hold zone)`); } }
     // Commander named a unit in chat (cmdrMap): buy it as soon as it is affordable with room for it, else bank (no other buys). Expires after 60 s.
     if (S.wantU) { const wu = S.wantU, wb = V.buy.find(x => x.u === wu), wp = wb ? wb.price : S.px[wu], bkW = V.bank === '' ? 0 : +V.bank; if (S.wantT == null) S.wantT = t;   // the buy list only names affordable units, so an unaffordable one is priced from px
       if (!wp || t - S.wantT > 60) { S.log(`  WANT ${wu} dropped T${t}: ${wp ? 'expired' : 'no price'}`); S.wantU = null; }
       else if (!bt) {
-        if (wb && wp <= bkW && 6 - act >= slotsOf(wu)) { ord = ord.filter(x => !/^(BUY|DEPLOY) /.test(x)); ord.unshift(`BUY ${wu}`, 'DEPLOY ALL'); if (wu === 'D') S.lastD = t; S.log(`  WANT T${t}: BUY ${wu}`); }
+        if (wb && wp <= bkW && 6 - act >= slotsOf(wu)) { ord = ord.filter(x => !/^(BUY|DEPLOY|MINE) /.test(x)); if (wu === 'L') ord.unshift(`MINE z${S.S_hz}`); else ord.unshift(`BUY ${wu}`, 'DEPLOY ALL'); if (wu === 'D') S.lastD = t; S.log(`  WANT T${t}: BUY ${wu}`); }
         else { ord = ord.filter(x => !/^BUY /.test(x)); S._saving = 1; } } }
     // Autobuy defers to the buy list: turn it off once, drop the loop's own AUTOBUY R/T toggles (commander RESERVE orders stay).
     { const abNow = g1(l, /\bauto ([A-Z]+)/); ord = ord.filter(x => !/^AUTOBUY (R|T|O|M|S|D)$/.test(x));
@@ -310,7 +317,8 @@ class Play {
   /** Results for the last post, as "OK <order>" / "ERR <order>: reason" (v6) or mapped from ACK id lines (v7). */
   onResults(results) {
     const S = this;
-    if (S.wantU && results.some(r => r === `OK BUY ${S.wantU}`)) { S.log(`  WANT ${S.wantU} bought T${S._t}`); S.wantU = null; }
+    if (results.some(r => /^OK (BUY L$|MINE )/.test(r))) { S.mineDone = 1; S.log(`  MINE pack bought T${S._t}`); }
+    if (S.wantU && results.some(r => r === `OK BUY ${S.wantU}` || (S.wantU === 'L' && /^OK MINE /.test(r)))) { S.log(`  WANT ${S.wantU} bought T${S._t}`); S.wantU = null; }
     if (results.some(r => /^OK BUY M/.test(r))) { let mw = (S.medicWant ?? 1) - 1; S.mbank = 0; S.log(`  MEDIC bought T${S._t}, ${mw} left`); if (mw <= 0) { S.medicWant = null; S.mdone = 1; } else S.medicWant = mw; }
     if (results.some(r => /^OK BANK/.test(r))) S.mbank = 1;
     for (const r of results) if (/^OK BUY R$/.test(r)) S.rbuys.push(S._t || 0);

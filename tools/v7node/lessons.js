@@ -17,6 +17,7 @@ const TUNABLES = {
   capMedic:      { def: 2,  min: 0,  max: 3,   step: 1,  why: 'max medics alive' },
   capDronePacks: { def: 1,  min: 0,  max: 2,   step: 1,  why: 'max drone packs alive (0 = never buy drones)' },
   capMinePacks:  { def: 1,  min: 0,  max: 1,   step: 1,  why: 'max mine packs alive (0 = never buy mines; the arena caps 3 mines)' },
+  mineByT:       { def: 45, min: 0,  max: 120, step: 15, why: 'one mine pack laid in the hold zone from this T, after the medic (0 = off)' },
   sdRepMin:      { def: 0,  min: 0,  max: 4,   step: 1,  why: 'max scout trio + drone pack buys per 60 s (0 = no limit)' },
   tankFloor:     { def: 2,  min: 0,  max: 3,   step: 1,  why: 'tanks the buy list tops up to first' },
 };

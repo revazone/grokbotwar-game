@@ -24,7 +24,7 @@ const saveH = h => { fs.mkdirSync(path.dirname(histFile()), { recursive: true })
 function parse(txt) {
   const M = { reports: [], buys: [], result: '' }; let j = null; try { j = JSON.parse(txt); } catch {}
   const addPost = (t, lines, acks) => { const ok = new Set((acks || []).map(a => (a.match(/^ACK (\d+) OK/) || [])[1]).filter(Boolean));
-    for (const ln of lines) { const m = ln.match(/^#(\d+) (.*)$/); const id = m ? m[1] : null, o = m ? m[2] : ln; if (id && acks && acks.length && !ok.has(id)) continue; const b = o.match(/^BUY ([A-Z])$/); if (b) M.buys.push({ t, u: b[1] }); } };
+    for (const ln of lines) { const m = ln.match(/^#(\d+) (.*)$/); const id = m ? m[1] : null, o = m ? m[2] : ln; if (id && acks && acks.length && !ok.has(id)) continue; const b = o.match(/^BUY ([A-Z])$/); if (b) M.buys.push({ t, u: b[1] }); if (/^MINE z\d/.test(o)) M.buys.push({ t, u: 'L' }); } };
   if (j && Array.isArray(j.reports)) { for (const l of j.reports) M.reports.push({ t: +((l.match(/ T(\d+)/) || [])[1] || 0), l }); for (const p of j.posts || []) addPost(+p.t || 0, p.lines, p.acks); M.result = j.result || ''; return M; }
   let t = 0;
   for (const raw of String(txt).split('\n')) {
@@ -34,12 +34,15 @@ function parse(txt) {
   }
   return M;
 }
-const UNIT = { R: 'rifle', T: 'tank', S: 'scout', O: 'mortar', M: 'medic', D: 'drone' };
+// Unit letters (legend printed in every summary; never guess): S scout, R rifle, T tank, M medic, D drone, O mortar, L mine. L in a mix is a
+// MINE pack, not losses (the report's 'L:' event is losses) and never a medic (M).
+const UNIT = { S: 'scout', R: 'rifle', T: 'tank', M: 'medic', D: 'drone', O: 'mortar', L: 'mine' };
+const LEGEND = 'legend: ' + Object.entries(UNIT).map(([k, v]) => `${k} ${v}`).join(', ');
 /** Compact digest the agent decides from, plus the mistake tags (each names the keys that address it). */
 function digest(M, K = L.load()) {
   const end = M.result || (M.reports.length ? M.reports[M.reports.length - 1].l : '');
   const buys = {}; for (const b of M.buys) buys[b.u] = (buys[b.u] || 0) + 1;
-  const units = { ...buys }; if (units.S) units.S *= 3; if (units.D) units.D *= 3;
+  const units = { ...buys }; if (units.S) units.S *= 3; if (units.D) units.D *= 3; if (units.L) units.L *= 3;
   const lost = {}, elost = {};
   for (const r of M.reports) { const ev = (r.l.split('|')[1] || ''); for (const [re, o] of [[/(?:^|\s)L:(\S+)/, lost], [/EL:(\S+)/, elost]]) { const m = ev.match(re); if (m) for (const k of m[1].matchAll(/([A-Z])(\d+)/g)) o[k[1]] = (o[k[1]] || 0) + +k[2]; } }
   const banks = M.reports.map(r => ({ t: r.t, b: +((r.l.match(/\| buy b(\d+)/) || [])[1] || 0), a: +((r.l.match(/act (\d)/) || [])[1] ?? 6) }));
@@ -75,11 +78,13 @@ function digest(M, K = L.load()) {
   const id = require('crypto').createHash('sha1').update(end + '|' + M.reports.length + '|' + M.buys.length).digest('hex').slice(0, 10);
   return { id, win, hp, tEnd, cause, severe, severeTags, buys, units, lost, elost, endBank: banks.length ? banks[banks.length - 1].b : 0, maxBank: Math.max(0, ...banks.map(x => x.b)), idle, gaps, medT, zMax, zEnd: zs.length ? `${zs[zs.length - 1][1]}/${zs[zs.length - 1][2]}` : '-', tags };
 }
-const fmtMix = o => Object.entries(o).map(([k, v]) => `${v}${k}`).join(' ') || 'none';
+const PACK = { S: 'scout trio', D: 'drone pack', L: 'mine pack' };
+const fmtMix = (o, pack) => Object.entries(o).map(([k, v]) => `${v} ${(pack && PACK[k]) || UNIT[k] || k}${v === 1 ? '' : 's'}`).join(', ') || 'none';
 function printSummary(D, H, K) {
   const out = [];
   out.push(`MATCH ${D.win ? 'WON' : 'LOST'} | end: ${D.cause} | base hp ${D.hp} | zones end ${D.zEnd}, max held ${D.zMax}`);
-  out.push(`buys (orders): ${fmtMix(D.buys)}  = units ${fmtMix(D.units)}`);
+  out.push(`buys (orders): ${fmtMix(D.buys, 1)}  = units ${fmtMix(D.units)}`);
+  out.push(LEGEND);
   out.push(`lost: ${fmtMix(D.lost)} | killed: ${fmtMix(D.elost)}`);
   out.push(`credits: end ${D.endBank}, max ${D.maxBank}, idle reports ${D.idle} | first medic ${D.medT === undefined ? 'never' : 'T' + D.medT}`);
   out.push('mistakes: ' + (D.tags.length ? D.tags.map(t => `${t.id} (${t.why}; cost ${t.cost}) -> ${t.keys.join('|')}`).join('; ') : 'none flagged') + (D.severe ? ` [SEVERE: base lost; exception only for ${D.severeTags.join('/') || 'none'}]` : ''));

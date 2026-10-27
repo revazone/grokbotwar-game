@@ -16,7 +16,7 @@ function parseLog(txt) {
   const addPost = (t, lines, acks) => {
     const ok = new Set((acks || []).map(a => (a.match(/^ACK (\d+) OK/) || [])[1]).filter(Boolean));
     for (const ln of lines) { const m = ln.match(/^#(\d+) (.*)$/); const id = m ? m[1] : null, o = m ? m[2] : ln; if (id && acks && acks.length && !ok.has(id)) continue;
-      const b = o.match(/^BUY ([A-Z])$/); if (b) M.buys.push({ t, u: b[1] }); const mv = o.match(/^MOVE_ALL z(\d)/); if (mv) M.moves.push({ t, z: +mv[1] }); }
+      const b = o.match(/^BUY ([A-Z])$/); if (b) M.buys.push({ t, u: b[1] }); if (/^MINE z\d/.test(o)) M.buys.push({ t, u: 'L' }); const mv = o.match(/^MOVE_ALL z(\d)/); if (mv) M.moves.push({ t, z: +mv[1] }); }
   };
   if (j && Array.isArray(j.reports)) {
     for (const l of j.reports) M.reports.push({ t: +((l.match(/ T(\d+)/) || [])[1] || 0), l });
