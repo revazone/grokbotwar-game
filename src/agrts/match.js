@@ -1750,7 +1750,7 @@ class AgrtsMatch extends EventEmitter {
         }
         if (got) break;
       }
-      if (!got) { const why = this.mineBlockedAt(a.x, a.y) || 'structure'; return { pts, why: `blocked by ${why === 'planned' ? 'planned spot' : why}` }; }
+      if (!got) { const why = this.mineBlockedAt(a.x, a.y) || 'structure'; return { pts, why: `blocked by ${why === 'planned' ? 'planned spot' : why}`, at: { x: a.x, y: a.y, reason: why === 'planned' ? 'planned spot' : why } }; }
       pts.push(got);
     }
     return { pts, why: '' };
@@ -1759,6 +1759,17 @@ class AgrtsMatch extends EventEmitter {
   /** The 3-mine pack in `zone` as a whole: '' when every mine has a clear spot (moved if needed), else `blocked by <reason>`. */
   _minePackBlocked(side, zone) {
     return this._minePackPlace(side, zone, Math.floor(this.mineStats[side].laid / 3)).why;
+  }
+
+  /**
+   * Refused-pack marker (docs/MINES.md, Seeing your mines): a red X with the short reason at the blocked aimed spot, Green only
+   * (Ember's refusals never reach the frame). Pure VFX on combatFx: no rng, no rule change. Called only on a real order, never a probe.
+   */
+  _mineRefusedFx(side, zone) {
+    if (side !== 0 || zone == null || zone < 0) return;
+    const r = this._minePackPlace(side, zone, Math.floor(this.mineStats[side].laid / 3));
+    if (!r.why || !r.at) return;
+    this.combatFx.push({ x: r.at.x, y: r.at.y, t: 0, life: 2.4, kind: 'mine-no', side, col: '#ff4a3a', r: 12, why: r.at.reason });
   }
 
   /** Lay one mine of type k from the reserve. False at the field cap (max_alive), or when its pack's spread is blocked; it stays in reserve. */
@@ -1813,7 +1824,7 @@ class AgrtsMatch extends EventEmitter {
         }
         if (spotter && !m.spotted) { m.spotted = true; this.mineStats[s].spotted++; this._log(`${TEAM[1 - s].log} spots a mine · z${m.zone + 1}`, 1 - s); }
         m.clear = spotter ? m.clear + dt : 0;
-        if (m.clear >= MINE_CLEAR_S) { m.gone = true; this.mineStats[s].cleared++; this._log(`${TEAM[1 - s].log} clears a mine · z${m.zone + 1}`, 1 - s); continue; }
+        if (m.clear >= MINE_CLEAR_S) { m.gone = true; this.mineStats[s].cleared++; this.combatFx.push({ x: m.x, y: m.y, t: 0, life: 0.8, kind: 'mine-clear', side: s, col: s === 0 ? '#bafc82' : '#ff7768', r: 16 }); this._log(`${TEAM[1 - s].log} clears a mine · z${m.zone + 1}`, 1 - s); continue; }
         if (m.arm > 0) continue;
         const trig = foes.find(v => !U.isFlying(v.type) && Math.hypot(v.x - m.x, v.y - m.y) <= MINE_TOUCH + TYPES[v.type].r * 0.5);
         if (trig) this._mineBlast(m, a, trig);
@@ -1846,6 +1857,8 @@ class AgrtsMatch extends EventEmitter {
     }
     const st = this.mineStats[m.side]; st.blasts++; st.hits += k; st.kills += kills;
     this.combatFx.push({ x: m.x, y: m.y, t: 0, life: 0.6, kind: 'mine', col: a.color, r: R });
+    // Sparkle where the mine sat (own or spotted only: the page drops it for an unspotted Ember mine, whose blast still shows).
+    this.combatFx.push({ x: m.x, y: m.y, t: 0, life: 0.8, kind: 'mine-clear', side: m.side, spotted: m.side === 0 || !!m.spotted, col: m.side === 0 ? '#bafc82' : '#ff7768', r: 16 });
     this._sparks(m.x, m.y, a.color, 12);
     this.cameraShake = Math.max(this.cameraShake, toucher ? 0.35 : 0.2);
     this._log(`${TEAM[m.side].log} MINE hits z${m.zone + 1} · ${k} unit${k === 1 ? '' : 's'}`, m.side);
@@ -4995,7 +5008,7 @@ class AgrtsMatch extends EventEmitter {
     const z = parsed.zone;
     if (!(side === 0 ? this.land[z] > 0.12 : this.land[z] < -0.12)) return this._refuse(side, parsed, `z${z + 1} not held`);
     const why = this._minePackBlocked(side, z);   // the whole spread is checked: one blocked mine refuses the order, nothing charged
-    if (why) return this._refuse(side, parsed, why);
+    if (why) { this._mineRefusedFx(side, z); return this._refuse(side, parsed, why); }
     this.mineZone[side] = z;
     return this._liveBuy(side, { ...parsed, op: 'BUY', type: k }, scratch);
   }
@@ -5005,7 +5018,7 @@ class AgrtsMatch extends EventEmitter {
     if (this._buysUsed(side) >= this.maxBuys) return this._refuse(side, parsed, `buys maxed ${this._buysUsed(side)}/${this.maxBuys}`);
     if (this._livingCount(side) + this._packOf(parsed.type) > C.ROSTER_LIMIT) return this._refuse(side, parsed, `roster full ${C.ROSTER_LIMIT} alive`);
     const capped = this._buyCapReason(side, parsed.type);
-    if (capped) return this._refuse(side, parsed, capped);
+    if (capped) { if (U.isMine(parsed.type) && / blocked by /.test(capped)) this._mineRefusedFx(side, this._mineZoneOf(side)); return this._refuse(side, parsed, capped); }
     if (!(this.fieldCredits[side] >= cost)) return this._refuse(side, parsed, `bank ${Math.floor(this.fieldCredits[side])} < ${cost}`);
     this.fieldCredits[side] -= cost;
     this.liveBuys[side]++;
@@ -5731,7 +5744,7 @@ class AgrtsMatch extends EventEmitter {
       // Gun towers and depots (TOWERS=1). Hospitals stay in `hospitals`. aim is the target point while it has one.
       ...(this.tw.on ? { towers: this._towerFrames(r1) } : {}),
       // Land mines: every mine, `spotted` true once the enemy saw it. The page draws Green's always, Ember's only spotted (docs/MINES.md).
-      mines: (this.mines || [[], []]).flat().map(m => ({ id: m.id, side: m.side, x: r1(m.x), y: r1(m.y), zone: m.zone, armed: m.arm <= 0, spotted: !!m.spotted, ...(m.side === 0 && m.laidAt != null ? { laidAt: r1(m.laidAt) } : {}) })),
+      mines: (this.mines || [[], []]).flat().map(m => ({ id: m.id, side: m.side, x: r1(m.x), y: r1(m.y), zone: m.zone, armed: m.arm <= 0, armP: Math.round(Math.max(0, Math.min(1, 1 - m.arm / MINE_ARM_S)) * 100) / 100, spotted: !!m.spotted, ...(m.side === 0 && m.laidAt != null ? { laidAt: r1(m.laidAt) } : {}) })),
       units: this.units.map(u => ({
         id: u.id, tag: this._tagOf(u), side: u.side, type: u.type, x: r1(u.x), y: r1(u.y), hp: r1(u.hp), max: u.max,
         facingX: u.facingX || 0, facingY: u.facingY || 0, guard: !!u.guard, medicMode: u.medicMode || '',

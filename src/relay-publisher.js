@@ -82,7 +82,7 @@ function slimAgrts(st) {
     mines: (st.mines || []).filter(m => m.side === 0 || m.spotted),
     shots: (st.shots || []).map(s => ({ x: r1(s.x), y: r1(s.y), tx: r1(s.tx), ty: r1(s.ty), type: s.type, side: s.side, col: s.col, life: r1(s.life), maxLife: s.maxLife, ...(s.arc ? { arc: true } : {}) })),
     sparks: (st.sparks || []).map(p => ({ x: r1(p.x), y: r1(p.y), life: r1(p.life), col: p.col })),
-    combatFx: st.combatFx || [], spawnFx: st.spawnFx || [], capturePulses: st.capturePulses || [],
+    combatFx: (st.combatFx || []).filter(p => !((p.kind === 'mine-lay' || p.kind === 'mine-no') && p.side === 1) && !(p.kind === 'mine-clear' && p.spotted === false)),   // mine VFX: Ember's lay/refusal and unspotted-mine sparkles stay off the public relay spawnFx: st.spawnFx || [], capturePulses: st.capturePulses || [],
     spendPulses: st.spendPulses || [], healPopups: st.healPopups || [],
     notices: (st.notices || []).slice(-3), logs: st.logs || [],
     teams: teams.map(t => ({
