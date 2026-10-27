@@ -16,11 +16,12 @@ const TUNABLES = {
   capMortar:     { def: 2,  min: 0,  max: 2,   step: 1,  why: 'max mortars alive' },
   capMedic:      { def: 2,  min: 0,  max: 3,   step: 1,  why: 'max medics alive' },
   capDronePacks: { def: 1,  min: 0,  max: 2,   step: 1,  why: 'max drone packs alive (0 = never buy drones)' },
+  capMinePacks:  { def: 1,  min: 0,  max: 1,   step: 1,  why: 'max mine packs alive (0 = never buy mines; the arena caps 3 mines)' },
   sdRepMin:      { def: 0,  min: 0,  max: 4,   step: 1,  why: 'max scout trio + drone pack buys per 60 s (0 = no limit)' },
   tankFloor:     { def: 2,  min: 0,  max: 3,   step: 1,  why: 'tanks the buy list tops up to first' },
 };
 /** Buy-list caps (own units alive) from the tunables. */
-const caps = K => ({ R: K.capRifle, T: K.capTank, S: 3 * K.capScoutTrios, O: K.capMortar, M: K.capMedic, D: 3 * K.capDronePacks });
+const caps = K => ({ R: K.capRifle, T: K.capTank, S: 3 * K.capScoutTrios, O: K.capMortar, M: K.capMedic, D: 3 * K.capDronePacks, L: 3 * K.capMinePacks });
 const file = () => process.env.GBW_LESSONS || path.join(ROOT, 'state', 'lessons.json');
 const logFile = () => process.env.GBW_LESSONS_LOG || path.join(path.dirname(file()), 'lessons.log');
 const clamp = (k, v) => { const t = TUNABLES[k]; v = Math.round(+v); if (!Number.isFinite(v)) return t.def; return Math.min(t.max, Math.max(t.min, v)); };

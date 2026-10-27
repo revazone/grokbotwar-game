@@ -52,6 +52,11 @@ const POST_R = 15; // forward post hull radius, px (drawing, reach, drone contac
 // The flight is long enough to read at watch-page scale; the scorch fades over about a second.
 const MORTAR_FLIGHT = 0.62;
 const MORTAR_SCORCH = 1;
+// Land mines (docs/MINES.md): arming time, spot reach of an enemy Scout / Drone, and how long a spotter must stay to clear one.
+const MINE_ARM_S = 3;
+const MINE_SPOT_SCOUT = 60;
+const MINE_SPOT_AIR = 40;
+const MINE_CLEAR_S = 1.5;
 // Drones are launch and forget (docs/DRONE.md): on its first step a kamikaze unit picks one enemy
 // (see _droneLaunchPick), locks that unit's id and flies at it until it hits or dies. It never holds,
 // hovers or waits, and later MOVE / FOCUS orders do not retarget it; only the target's death does.
@@ -451,6 +456,9 @@ class AgrtsMatch extends EventEmitter {
     this.queueSource = [0, 1].map(s => (this.drivers[s] === 'warrior' ? 'warrior' : 'simulated'));
     this.reserve = this.rosters.map(cloneCounts);
     this.units = [];
+    // Land mines (docs/MINES.md): static, hidden, never in this.units (no active cap, no zone capture, not targetable).
+    this.mines = [[], []]; this.mineZone = [null, null];
+    this.mineStats = [0, 1].map(() => ({ laid: 0, blasts: 0, hits: 0, kills: 0, cleared: 0, spotted: 0 }));
     this.shots = []; this.sparks = []; this.combatFx = []; this.spawnFx = [];
     this.capturePulses = []; this.spendPulses = []; this.healPopups = []; this.notices = [];
     this.hp = [100, 100];
@@ -746,6 +754,7 @@ class AgrtsMatch extends EventEmitter {
     // this call Ember banks forever and never reinforces (see tools/test-ember-buys.js).
     if (this._emberWindow && !this._seated(1)) this._spend(1);
     this._territory(dt);
+    this._layReserveMines();
     if (this.autobuy[0]) this._autobuyStep(0);
     if (this.autobuy[1]) this._autobuyStep(1);
     const sideUnits = [this.units.filter(u => u.side === 0), this.units.filter(u => u.side === 1)];
@@ -753,6 +762,7 @@ class AgrtsMatch extends EventEmitter {
     for (const v of this.units) if (grounded(v)) zoneCounts[Math.min(7, Math.max(0, Math.floor(v.x / (W / 8))))][v.side]++;
     this._buildGrid();
     for (const u of this.units) this._stepUnit(u, dt, sideUnits, zoneCounts);
+    this._stepMines(dt);
     for (const t of this.turrets) this._stepTurret(t, dt, sideUnits[1 - t.side]);
     if (this.fieldHospital) this._stepHospitals(dt);
     if (this.guns) for (const g of this.guns) this._stepGun(g, dt, sideUnits[1 - g.side]);
@@ -1279,6 +1289,7 @@ class AgrtsMatch extends EventEmitter {
 
   _releaseUnit(side, k, guard, y) {
     if (!TYPES[k] || !(this.reserve[side][k] > 0)) return false;
+    if (U.isMine(k)) return this._layMine(side, k);   // a mine is laid at the front line, never fielded (docs/MINES.md)
     // max_alive (units.csv) caps that type on the field; the extra one stays in reserve.
     const cap = TYPES[k].maxAlive | 0;
     if (cap > 0 && this.units.filter(v => v.side === side && v.type === k && v.hp > 0).length >= cap) return false;
@@ -1659,6 +1670,90 @@ class AgrtsMatch extends EventEmitter {
         this._decayBank(s);
       }
     }
+  }
+
+  /** The zone a side lays mines in: its MINE <zone> pick while it still owns it, else its owned zone closest to the enemy, else home. */
+  _mineZoneOf(side) {
+    const own = i => (side === 0 ? this.land[i] > 0.12 : this.land[i] < -0.12);
+    const pick = this.mineZone[side];
+    if (pick != null && own(pick)) return pick;
+    let z = side === 0 ? 0 : 7;
+    for (let i = 0; i < 8; i++) if (own(i) && (side === 0 ? i > z : i < z)) z = i;
+    return z;
+  }
+
+  /** Lay one mine of type k from the reserve. False at the field cap (max_alive); it stays in reserve. */
+  _layMine(side, k) {
+    const t = TYPES[k];
+    if (t.maxAlive > 0 && this.mines[side].length >= t.maxAlive) return false;
+    this.reserve[side][k]--;
+    const zone = this._mineZoneOf(side), zw = W / 8;
+    const n = this.mines[side].length;
+    const lane = [0.25, 0.5, 0.75][(this.mineStats[side].laid + n) % 3];
+    const x = this._fieldX(zone * zw + zw * (0.35 + this.rng() * 0.3));
+    const y = this._fieldY(H * lane + (this.rng() - 0.5) * 40);
+    this.mines[side].push({ id: this.nextId++, side, type: k, x, y, zone, arm: MINE_ARM_S, spotted: false, clear: 0 });
+    this.mineStats[side].laid++;
+    this.combatFx.push({ x, y, t: 0, life: 0.5, kind: 'mine-lay', side, col: t.color, r: 8 });
+    if (this.mines[side].length === 1 || (this.reserve[side][k] | 0) === 0) this._log(`${TEAM[side].log} mines laid · z${zone + 1}`, side);
+    return true;
+  }
+
+  /** Every mine bought (live BUY, AUTOBUY, Ember, a drafted pack) goes from the reserve onto the field at once, up to the cap. */
+  _layReserveMines() {
+    if (this.phase !== 'live' || this.over) return;
+    for (let s = 0; s < 2; s++) for (const k of TYPE_IDS) if (U.isMine(k)) while (this.reserve[s][k] > 0 && this._layMine(s, k)) { /* lay */ }
+  }
+
+  /**
+   * Mines: arm, get spotted or cleared by enemy Scouts / Drones, and blow up under an enemy ground unit. The blast hits enemy ground
+   * units only (falloff, blast_resist); our own units and anything flying are never hurt. One use.
+   */
+  _stepMines(dt) {
+    for (let s = 0; s < 2; s++) {
+      const list = this.mines[s];
+      if (!list.length) continue;
+      const foes = this.units.filter(v => v.side !== s && v.hp > 0);
+      for (const m of list) {
+        if (m.gone) continue;
+        if (m.arm > 0) m.arm -= dt;
+        const a = TYPES[m.type];
+        let spotter = false;
+        for (const v of foes) {
+          const role = U.roleOf(v.type), d = Math.hypot(v.x - m.x, v.y - m.y);
+          const reach = role === 'fast' ? MINE_SPOT_SCOUT : (role === 'kamikaze' || U.isFlying(v.type)) ? MINE_SPOT_AIR : 0;
+          if (reach && d <= reach) spotter = true;
+        }
+        if (spotter && !m.spotted) { m.spotted = true; this.mineStats[s].spotted++; this._log(`${TEAM[1 - s].log} spots a mine · z${m.zone + 1}`, 1 - s); }
+        m.clear = spotter ? m.clear + dt : 0;
+        if (m.clear >= MINE_CLEAR_S) { m.gone = true; this.mineStats[s].cleared++; this._log(`${TEAM[1 - s].log} clears a mine · z${m.zone + 1}`, 1 - s); continue; }
+        if (m.arm > 0) continue;
+        const trig = foes.find(v => !U.isFlying(v.type) && Math.hypot(v.x - m.x, v.y - m.y) <= a.range + TYPES[v.type].r * 0.5);
+        if (trig) this._mineBlast(m, a);
+      }
+      this.mines[s] = list.filter(m => !m.gone);
+    }
+  }
+
+  _mineBlast(m, a) {
+    m.gone = true;
+    const R = a.splash, center = a.dmg * this.dmgScale;
+    let k = 0, kills = 0;
+    for (const v of this.units) {
+      if (v.side === m.side || v.hp <= 0 || U.isFlying(v.type)) continue;
+      const t = TYPES[v.type], d = Math.hypot(v.x - m.x, v.y - m.y);
+      if (d > R + t.r * 0.5) continue;
+      const dmg = center * (1 - a.falloff * Math.min(1, d / R)) * (1 - (t.blastResist || 0));
+      if (!(dmg > 0)) continue;
+      v.hp -= dmg; v.hitAt = this.elapsed; v.hitFlash = 0.22;
+      const kd = d || 1; v.kx = (v.kx || 0) + (v.x - m.x) / kd * 40; v.ky = (v.ky || 0) + (v.y - m.y) / kd * 40;
+      k++; if (v.hp <= 0) kills++;
+    }
+    const st = this.mineStats[m.side]; st.blasts++; st.hits += k; st.kills += kills;
+    this.combatFx.push({ x: m.x, y: m.y, t: 0, life: 0.6, kind: 'mine', col: a.color, r: R });
+    this._sparks(m.x, m.y, a.color, 12);
+    this.cameraShake = Math.max(this.cameraShake, 0.2);
+    this._log(`${TEAM[m.side].log} MINE hits z${m.zone + 1} · ${k} unit${k === 1 ? '' : 's'}`, m.side);
   }
 
   _stepUnit(u, dt, sideUnits, zoneCounts) {
@@ -4431,6 +4526,7 @@ class AgrtsMatch extends EventEmitter {
     if (parsed.op === 'BUY' && parsed.tower) return this._buyTower(side, parsed);
     if (parsed.op === 'BUY' && parsed.range) return this._buyRange(side, parsed);
     if (parsed.op === 'BUY') return this._liveBuy(side, parsed, scratch);
+    if (parsed.op === 'MINE') return this._mineOrder(side, parsed, scratch);
     if (parsed.op === 'DEPLOY') return this._liveDeploy(side, parsed, scratch);
     if (parsed.op === 'FOCUS') return this._setFocus(side, parsed);
     if (parsed.op === 'STANCE') return this._setStance(side, parsed);
@@ -4751,6 +4847,7 @@ class AgrtsMatch extends EventEmitter {
   /** Units of that type this side has alive: on the field plus in reserve (max_alive counts both). */
   _aliveOf(side, type) {
     let n = this.reserve[side][type] || 0;
+    if (U.isMine(type)) return n + this.mines[side].length;
     for (const u of this.units) if (u.side === side && u.type === type && u.hp > 0) n++;
     return n;
   }
@@ -4794,6 +4891,16 @@ class AgrtsMatch extends EventEmitter {
   }
 
   /** A live buy spends the bank now and does not consume the pre-match queue. A successful BUY clears BANK. */
+  /** MINE <zone>: the next pack is laid in that zone (refused unless this side owns it), then one pack is bought (docs/MINES.md). */
+  _mineOrder(side, parsed, scratch) {
+    const k = TYPE_IDS.find(t => U.isMine(t));
+    if (!k) return this._refuse(side, parsed, 'unknown unit MINE');
+    const z = parsed.zone;
+    if (!(side === 0 ? this.land[z] > 0.12 : this.land[z] < -0.12)) return this._refuse(side, parsed, `z${z + 1} not held`);
+    this.mineZone[side] = z;
+    return this._liveBuy(side, { ...parsed, op: 'BUY', type: k }, scratch);
+  }
+
   _liveBuy(side, parsed, scratch) {
     const cost = this._livePrice(side, parsed.type);
     if (this._buysUsed(side) >= this.maxBuys) return this._refuse(side, parsed, `buys maxed ${this._buysUsed(side)}/${this.maxBuys}`);
@@ -5524,6 +5631,8 @@ class AgrtsMatch extends EventEmitter {
       })) } : {}),
       // Gun towers and depots (TOWERS=1). Hospitals stay in `hospitals`. aim is the target point while it has one.
       ...(this.tw.on ? { towers: this._towerFrames(r1) } : {}),
+      // Land mines: every mine, `spotted` true once the enemy saw it. The page draws Green's always, Ember's only spotted (docs/MINES.md).
+      mines: (this.mines || [[], []]).flat().map(m => ({ id: m.id, side: m.side, x: r1(m.x), y: r1(m.y), zone: m.zone, armed: m.arm <= 0, spotted: !!m.spotted })),
       units: this.units.map(u => ({
         id: u.id, tag: this._tagOf(u), side: u.side, type: u.type, x: r1(u.x), y: r1(u.y), hp: r1(u.hp), max: u.max,
         facingX: u.facingX || 0, facingY: u.facingY || 0, guard: !!u.guard, medicMode: u.medicMode || '',

@@ -6,7 +6,7 @@ const awkNum = s => { const m = String(s).match(/^\s*[-+]?\d+(\.\d+)?/); return 
 const sumDigits = (s, re = /\d+/g) => { let n = 0; for (const m of String(s || '').matchAll(re)) n += +(m[1] !== undefined ? m[1] : m[0]); return n; };
 const g1 = (l, re) => { const m = l.match(re); return m ? m[1] : ''; };
 const LESSONS = require('./lessons');   // per-bot tunables the Improvement Loop adjusts (defaults = shipped behavior)
-const PX_DEFAULT = { T: 70, O: 44, R: 40, M: 36, S: 28, D: 20 };
+const PX_DEFAULT = { T: 70, O: 44, R: 40, M: 36, S: 28, D: 20, L: 36 };
 
 /** Parse once per report into the fields the rules read. Sections v7 left unchanged are read with the same patterns for both. */
 function view(l, px) {
@@ -31,7 +31,7 @@ function view(l, px) {
 const has = (V, u) => V.buy.some(b => b.u === u);
 // Counter buy (fix/counter-buy): pick the reinforcement that trades best per credit against what Ember fields now.
 // Matchup numbers come from the arena's own src/agrts/red-buy.js (units.csv dmg, cooldown, bonus_vs, range, splash) -- the same table Ember buys with.
-let MU = null; try { const RB = require('../../src/agrts/red-buy'); const id = { T: 'tank', R: 'rifle', S: 'scout', O: 'mortar', M: 'medic', D: 'drone' }; MU = (c, e) => { try { return RB.matchup(id[c], id[e]); } catch { return 1; } }; } catch {}
+let MU = null; try { const RB = require('../../src/agrts/red-buy'); const id = { T: 'tank', R: 'rifle', S: 'scout', O: 'mortar', M: 'medic', D: 'drone', L: 'mine' }; MU = (c, e) => { try { return RB.matchup(id[c], id[e]); } catch { return 1; } }; } catch {}
 const FIELD_CAP = { T: 2, S: 3, O: 2, R: 6 };   // own-field caps per type (a scout buy fields 3)
 function enemyMix(ef) { const o = {}; for (const m of String(ef || '').matchAll(/\b(\d*)([A-Z])@z\d/g)) o[m[2]] = (o[m[2]] || 0) + (m[1] === '' ? 1 : +m[1]); return o; }
 function ownMix(f, res) { const o = {}; for (const m of String(f || '').matchAll(/\b([A-Z])(\d*)@/g)) o[m[1]] = (o[m[1]] || 0) + 1; for (const m of String(res || '').matchAll(/(\d+)([A-Z])\b/g)) o[m[2]] = (o[m[2]] || 0) + +m[1]; return o; }
@@ -98,8 +98,8 @@ function listPick(V, fr, bank, opts = {}) {
   }
   return best;
 }
-const slotsOf = u => (u === 'S' || u === 'D' ? 3 : 1);
-const SPEND_ORDER = ['R', 'O', 'M', 'T', 'S', 'D'];   // spend-guard fallback, cheapest useful first
+const slotsOf = u => (u === 'S' || u === 'D' ? 3 : u === 'L' ? 0 : 1);   // mines take no field slot (docs/MINES.md)
+const SPEND_ORDER = ['L', 'R', 'O', 'M', 'T', 'S', 'D'];   // spend-guard fallback: a mine pack first when none is out (arena cap 3, lesson capMinePacks), then cheapest useful
 /** Shared with tools/lesson.js (idle-credits): a report is idle-eligible when a field slot is free, bank >= guard, and some offered unit is affordable and fits. */
 function idleEligible(l, guard, px = PX_DEFAULT) {
   const V = view(l, { ...PX_DEFAULT, ...px }); const act = V.act, bank = V.bank === '' ? 0 : +V.bank;
@@ -111,7 +111,7 @@ function idleEligible(l, guard, px = PX_DEFAULT) {
 // medic-want, rifle-cap, save-for-tank, spend-guard, medic-by-t, lesson-caps, rifle-rate, autobuy-off, tank-bank-check, deploy-guard
 
 // Unit names a commander can say in chat (singular, plural, nicknames) -> buy code and display name.
-const UNIT_WORD = [[/scout|flanker|raider/, 'S', 'scout trio'], [/rifle|trooper|infantry/, 'R', 'rifle'], [/tank|breaker/, 'T', 'tank'], [/mortar|artillery|tube/, 'O', 'mortar'], [/drone/, 'D', 'drone pack']];
+const UNIT_WORD = [[/scout|flanker|raider/, 'S', 'scout trio'], [/rifle|trooper|infantry/, 'R', 'rifle'], [/tank|breaker/, 'T', 'tank'], [/mortar|artillery|tube/, 'O', 'mortar'], [/drone/, 'D', 'drone pack'], [/\bmines?\b|land ?mine/, 'L', 'mine pack']];
 class Play {
   constructor(o = {}) {
     this.S_hz = o.hold || 4; this.zone = this.S_hz; this.S_at = o.assaultT || 318; this.S_pt = 30; this.S_pe = 60; this.S_hp = 0;

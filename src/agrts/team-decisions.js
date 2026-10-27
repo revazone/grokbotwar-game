@@ -35,12 +35,12 @@ const WEIGHTS = {
   counter: { fast: 3, ranged: 3, armor: 3, healer: 2 },
 };
 // What each role is countered by.
-const COUNTER = { fast: 'armor', ranged: 'fast', armor: 'ranged', healer: 'armor', kamikaze: 'ranged', mortar: 'ranged' };
+const COUNTER = { fast: 'armor', ranged: 'fast', armor: 'ranged', healer: 'armor', kamikaze: 'ranged', mortar: 'ranged', mine: 'fast' };
 // Roles the simulated draft and queue never pick on their own. A kamikaze unit (the Drone) is
 // drafted only by the Ember commander (src/agrts/commander.js draftDrones) or a seat's opening,
 // so a units.csv with a Drone row rolls the same simulated drafts and queues as one without it.
 // A mortar is the same: the commander drafts it (draftMortars) when MORTAR is on.
-const SIM_SKIP = new Set(['kamikaze', 'mortar']);
+const SIM_SKIP = new Set(['kamikaze', 'mortar', 'mine']);
 const simTypes = () => TYPE_IDS.filter(k => !SIM_SKIP.has(roleOf(k)));
 
 const roleOf = k => (TYPES[k] ? TYPES[k].role : '');

@@ -60,6 +60,7 @@ function digest(M, K = L.load()) {
   const sdBuys = (buys.S || 0) + (buys.D || 0);
   if ((buys.S || 0) >= 4) tags.push({ id: 'scout-churn', keys: ['capScoutTrios', 'sdRepMin'], why: `${buys.S} scout trios bought (${units.S} scouts), ${lost.S || 0} lost` });
   if ((buys.D || 0) >= 2 && (lost.D || 0) >= 3) tags.push({ id: 'drone-churn', keys: ['capDronePacks', 'sdRepMin'], why: `${buys.D} drone packs, ${lost.D || 0} drones lost` });
+  if ((buys.L || 0) >= 3) tags.push({ id: 'mine-churn', keys: ['capMinePacks'], why: `${buys.L} mine packs bought (${buys.L * 36} CR not in the fight)` });
   if ((buys.R || 0) >= 12) tags.push({ id: 'rifle-churn', keys: ['rifleRepMin', 'capRifle'], why: `${buys.R} rifle buys` });
   if ((lost.T || 0) >= 4) tags.push({ id: 'tank-feed', keys: ['tankHotWindow', 'tankFloor', 'capTank'], why: `${lost.T} tanks lost` });
   if (idle >= 3) tags.push({ id: 'idle-credits', keys: ['spendGuardCR'], why: `${idle} reports with ${K.spendGuardCR}+ CR and a free slot` });
@@ -95,7 +96,7 @@ function evidence(H, D) {
   const recent = H.matches.slice(-WIN).map(m => m.tags || []); if (D && !D.recorded) { recent.push(D.tags.map(t => t.id)); recent.splice(0, Math.max(0, recent.length - WIN)); }
   const c = {}; for (const tg of recent) for (const id of new Set(tg)) c[id] = (c[id] || 0) + 1; return c;
 }
-const TAG_KEYS = { 'scout-churn': ['capScoutTrios', 'sdRepMin'], 'drone-churn': ['capDronePacks', 'sdRepMin'], 'rifle-churn': ['rifleRepMin', 'capRifle'], 'tank-feed': ['tankHotWindow', 'tankFloor', 'capTank'], 'idle-credits': ['spendGuardCR'], 'medic-late': ['medicByT', 'capMedic'], 'no-push': ['pushMargin'] };
+const TAG_KEYS = { 'scout-churn': ['capScoutTrios', 'sdRepMin'], 'drone-churn': ['capDronePacks', 'sdRepMin'], 'rifle-churn': ['rifleRepMin', 'capRifle'], 'tank-feed': ['tankHotWindow', 'tankFloor', 'capTank'], 'idle-credits': ['spendGuardCR'], 'medic-late': ['medicByT', 'capMedic'], 'no-push': ['pushMargin'], 'mine-churn': ['capMinePacks'] };
 const tagsFor = k => Object.keys(TAG_KEYS).filter(id => TAG_KEYS[id].includes(k));
 
 /** set: all guards; returns { ok, value, reason }. H.matches[-1] is the last recorded match (the one being debriefed). */

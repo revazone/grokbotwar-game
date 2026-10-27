@@ -5,3 +5,4 @@ tank,T,Breaker,34,70,92,18,40,14,1.9,14,#efbd68,⬟,"Slow armor, heavy base dama
 medic,M,Medic,24,36,34,3,58,24,1.4,10,#a9c7ff,+,Light support with staying power.,6,42,healer,disc,,,,,,,,,,,,,,,1,
 drone,D,Drone,10,20,7,36,30,85,0,8,#e59cff,✕,"Fast suicide unit, splash on impact.",0,0,kamikaze,cross,30,0.7,0.4,yes,0.5,yes,4,2,3,,,air,,,1,
 mortar,O,Mortar,26,44,28,14,188,11,2.6,12,#e6c36a,⌒,"Slow tube. Shells past rifle range, over walls.",0,0,mortar,tube,32,0.55,0.5,no,0,no,,,,,,ground,112,yes,1,
+mine,L,Mine,18,36,1,30,20,0,1,6,#c9b27a,✹,"Land mine pack x3. Laid hidden at your front line, arms in 3s, blasts enemy ground units that step close. Drones fly over.",0,0,mine,circle,46,0.6,1,no,,,3,,,,,ground,,,,3

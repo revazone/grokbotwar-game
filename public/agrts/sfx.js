@@ -13,7 +13,7 @@
   // name: [volume, cooldown ms, max same-name voices]
   const S = {
     rifle: [.5, 90, 3], scout: [.4, 90, 2], breaker: [.75, 250, 2], 'mortar-launch': [.7, 300, 2], 'mortar-impact': [.8, 200, 3],
-    drone: [.9, 120, 3], 'drone-launch': [.28, 250, 3], turret: [.45, 420, 2], destroyed: [.35, 120, 2], heal: [.4, 500, 1],
+    drone: [.9, 120, 3], 'drone-launch': [.28, 250, 3], turret: [.45, 420, 2], destroyed: [.35, 120, 2], heal: [.4, 500, 1], mine: [.35, 400, 1], 'mine-blast': [.85, 200, 3],
     capture: [.6, 600, 1], lost: [.6, 600, 1], coin: [.18, 250, 1], squelch: [.15, 300, 1], comm: [.5, 600, 1],
     start: [.4, 3000, 1], victory: [.45, 3000, 1], defeat: [.45, 3000, 1], alarm: [.3, 2500, 1],
   };
@@ -111,6 +111,8 @@
       if (c.kind === 'mortarLaunch') play('mortar-launch', p);
       else if (c.kind === 'mortar') pend.push({ at: performance.now() + Math.max(0, (c.delay || 0) - (c.t || 0)) * 1000, p });
       else if (c.kind === 'detonate') play('drone', p);
+      else if (c.kind === 'mine') play('mine-blast', p);
+      else if (c.kind === 'mine-lay' && c.side === 0) play('mine', p);   // only Green hears its own mines laid (Ember's stay hidden)
       else if (c.kind === 'turretDown') play('destroyed', p);
       else if (c.kind === 'blast') play('alarm', p);
     }

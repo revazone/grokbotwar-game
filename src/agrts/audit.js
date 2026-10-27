@@ -12,9 +12,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const COUNT_FIELDS = ['scouts', 'rifles', 'tanks', 'medics', 'drones', 'mortars'];
-const UNIT_CODE = { scout: 'S', rifle: 'R', tank: 'T', medic: 'M', drone: 'D', mortar: 'O' };
-const UNIT_ID_BY_FIELD = { scouts: 'scout', rifles: 'rifle', tanks: 'tank', medics: 'medic', drones: 'drone', mortars: 'mortar' };
+const COUNT_FIELDS = ['scouts', 'rifles', 'tanks', 'medics', 'drones', 'mortars', 'mines'];
+const UNIT_CODE = { scout: 'S', rifle: 'R', tank: 'T', medic: 'M', drone: 'D', mortar: 'O', mine: 'L' };
+const UNIT_ID_BY_FIELD = { scouts: 'scout', rifles: 'rifle', tanks: 'tank', medics: 'medic', drones: 'drone', mortars: 'mortar', mines: 'mine' };
 
 // ---------- scrub: no secrets in the trail ----------
 const SECRET_KEY = /(token|owner.?key|okey|gate|secret|authorization|password|rules.?key|relay.?key|publish.?key|cookie|bearer|^key$|^ok$|^g$)/i;

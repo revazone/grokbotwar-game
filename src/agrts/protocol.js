@@ -393,6 +393,12 @@ function parseOrder(raw) {
     if (rest.length === 2 && !zm) return { line, error: 'zone z1 to z8, like BUY TOWER z4' };
     return { line: zm ? `BUY TOWER z${zm[1]}` : 'BUY TOWER', op, tower: true, zone: zm ? +zm[1] : null };
   }
+  // MINE <zone>: lay the next mine pack in a zone we hold, and buy one (docs/MINES.md).
+  if (op === 'MINE') {
+    const zm = rest.length === 1 ? /^Z([1-8])$/.exec(rest[0]) : null;
+    if (!zm) return { line, error: 'like MINE z4' };
+    return { line: `MINE z${zm[1]}`, op, zone: +zm[1] - 1 };
+  }
   if (op === 'BUY') {
     if (rest.length !== 1) return { line, error: 'one unit, like BUY M' };
     const type = orderType(rest[0]);

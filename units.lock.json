@@ -1,7 +1,7 @@
 {
   "file": "units.csv",
-  "sha256": "9df33f8388a1405ce3fe1e1e5eea7b26dbfad54a18b174a45026dc3f84129a08",
-  "rows": 6,
+  "sha256": "f0e9c3529da4743a30fdfff08cc0709f163c195311092f2b8ac9fad511e85895",
+  "rows": 7,
   "normalization": "BOM removed, CRLF/CR to LF, trailing spaces and tabs removed on each line, trailing blank lines removed, one final newline",
   "note": "Official unit table fingerprint. Change units on purpose: edit units.csv, run node tools/units-lock.js --update, commit both. docs/SPEC.md section 5.4."
 }

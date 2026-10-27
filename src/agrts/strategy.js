@@ -13,8 +13,8 @@
   const MAX_DRONES = 4;     // units.csv max_alive for the Drone (the arena's own table overrides this when the card is given it)
   const DRAFT_BUDGET = 200; // credits an opening may spend (the arena's DRAFT_BUDGET; opening units cost their draft_cost)
   // The six units of the opening mix, in card order: arena unit id -> strategy count field.
-  const UNIT_IDS = ['scout', 'rifle', 'tank', 'medic', 'drone', 'mortar'];
-  const COUNT_KEY = { scout: 'scouts', rifle: 'rifles', tank: 'tanks', medic: 'medics', drone: 'drones', mortar: 'mortars' };
+  const UNIT_IDS = ['scout', 'rifle', 'tank', 'medic', 'drone', 'mortar', 'mine'];
+  const COUNT_KEY = { scout: 'scouts', rifle: 'rifles', tank: 'tanks', medic: 'medics', drone: 'drones', mortar: 'mortars', mine: 'mines' };
   const COUNT_FIELDS = UNIT_IDS.map(id => COUNT_KEY[id]);
   // The six units as units.csv has them, for a caller with no live unit table (an older arena, a test). The arena sends its own table
   // with the card, so a ruleset change reaches the card at once; tools/test-strategy.js fails if this drifts from units.csv.
@@ -25,6 +25,7 @@
     { id: 'medic', name: 'Medic', desc: 'Light support with staying power.', color: '#a9c7ff', draft: 24, live: 36, hp: 34, dmg: 3, range: 58, maxAlive: 0 },
     { id: 'drone', name: 'Drone', desc: 'Fast suicide unit, splash on impact.', color: '#e59cff', draft: 10, live: 20, hp: 7, dmg: 36, range: 30, maxAlive: 4 },
     { id: 'mortar', name: 'Mortar', desc: 'Slow tube. Shells past rifle range, over walls.', color: '#e6c36a', draft: 26, live: 44, hp: 28, dmg: 14, range: 188, maxAlive: 0 },
+    { id: 'mine', name: 'Mine', desc: 'Land mine pack x3. Laid hidden at your front line, arms in 3s, blasts enemy ground units that step close. Drones fly over.', color: '#c9b27a', draft: 18, live: 36, hp: 1, dmg: 30, range: 20, maxAlive: 3 },
   ];
   const DRAFT_COST = Object.fromEntries(FALLBACK_UNITS.map(u => [u.id, u.draft]));
   const NOTE_MAX = 200;
@@ -43,16 +44,16 @@
   // Presets. Balanced is today's play: its opening is exactly what state/openings.json holds for the Green seat
   // (3 Rifles, 2 Breakers, buy queue rifle tank rifle, spend on), so picking it changes nothing.
   const PLANS = {
-    balanced:   { id: 'balanced',   name: 'Balanced',   scouts: 0, rifles: 3, tanks: 2, medics: 0, drones: 0, mortars: 0, hold: 'z4', push: 'normal', medic: 'none',       queue: ['rifle', 'tank', 'rifle'] },
-    aggressive: { id: 'aggressive', name: 'Aggressive', scouts: 0, rifles: 4, tanks: 1, medics: 0, drones: 0, mortars: 0, hold: 'z4', push: 'early',  medic: 'none',       queue: ['rifle', 'rifle', 'rifle'] },
-    defensive:  { id: 'defensive',  name: 'Defensive',  scouts: 0, rifles: 3, tanks: 1, medics: 1, drones: 0, mortars: 0, hold: 'z3', push: 'late',   medic: 'one_early',  queue: ['rifle', 'rifle'] },
+    balanced:   { id: 'balanced',   name: 'Balanced',   scouts: 0, rifles: 3, tanks: 2, medics: 0, drones: 0, mortars: 0, mines: 0, hold: 'z4', push: 'normal', medic: 'none',       queue: ['rifle', 'tank', 'rifle'] },
+    aggressive: { id: 'aggressive', name: 'Aggressive', scouts: 0, rifles: 4, tanks: 1, medics: 0, drones: 0, mortars: 0, mines: 0, hold: 'z4', push: 'early',  medic: 'none',       queue: ['rifle', 'rifle', 'rifle'] },
+    defensive:  { id: 'defensive',  name: 'Defensive',  scouts: 0, rifles: 3, tanks: 1, medics: 1, drones: 0, mortars: 0, mines: 0, hold: 'z3', push: 'late',   medic: 'one_early',  queue: ['rifle', 'rifle'] },
   };
   const FIELDS = ['plan', ...COUNT_FIELDS, 'hold', 'push', 'medic', 'note'];
 
   /** The full strategy a plan stands for (a fresh object). */
   function fromPlan(plan) {
     const p = PLANS[plan] || PLANS.balanced;
-    return { plan: p.id, scouts: p.scouts, rifles: p.rifles, tanks: p.tanks, medics: p.medics, drones: p.drones, mortars: p.mortars, hold: p.hold, push: p.push, medic: p.medic, note: '' };
+    return { plan: p.id, scouts: p.scouts, rifles: p.rifles, tanks: p.tanks, medics: p.medics, drones: p.drones, mortars: p.mortars, mines: p.mines, hold: p.hold, push: p.push, medic: p.medic, note: '' };
   }
 
   /** One line, no control characters, no `"` or `|` (report delimiters), at most NOTE_MAX. Never throws. */
@@ -65,8 +66,8 @@
   // ---------- the arena's opening limits ----------
   const CARD_CAP = { tank: MAX_TANKS, medic: MAX_MEDICS };           // card rules: 2 Breakers, 2 medics
   const DEFAULT_ALIVE = { tank: MAX_TANKS, drone: MAX_DRONES };      // units.csv max_alive, when no live table is given
-  const LABEL = { scout: 'scouts', rifle: 'rifles', tank: 'breakers', medic: 'medics', drone: 'drones', mortar: 'mortars' };
-  const NAME = { scout: 'Scout', rifle: 'Rifle', tank: 'Breaker', medic: 'Medic', drone: 'Drone', mortar: 'Mortar' };
+  const LABEL = { scout: 'scouts', rifle: 'rifles', tank: 'breakers', medic: 'medics', drone: 'drones', mortar: 'mortars', mine: 'mines' };
+  const NAME = { scout: 'Scout', rifle: 'Rifle', tank: 'Breaker', medic: 'Medic', drone: 'Drone', mortar: 'Mortar', mine: 'Mine' };
 
   /**
    * The rules a strategy is checked against: env = { slots, budget, units: { <id>: { draft, maxAlive, open, why } } }, every part optional.
@@ -210,7 +211,7 @@
     const c = ctx || {};
     const lines = [
       ['plan', s.plan], ['custom', isCustom(s) ? 1 : 0], ['rifles', s.rifles], ['tanks', s.tanks], ['medics', s.medics],
-      ['scouts', s.scouts | 0], ['drones', s.drones | 0], ['mortars', s.mortars | 0], ['open_cost', cost(s, c.env)],
+      ['scouts', s.scouts | 0], ['drones', s.drones | 0], ['mortars', s.mortars | 0], ['mines', s.mines | 0], ['open_cost', cost(s, c.env)],
       ['hold', s.hold], ['hold_until_units', s.hold === 'z3' ? HOLD_Z3_UNITS : 0],
       ['push', s.push], ['push_t', PUSH_T[s.push]], ['push_when', PUSH_WHEN[s.push]],
       ['medic', s.medic], ['medic_total', MEDIC_TOTAL[s.medic]], ['medic_extra', Math.max(0, MEDIC_TOTAL[s.medic] - s.medics)],

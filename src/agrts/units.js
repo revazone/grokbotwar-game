@@ -14,7 +14,7 @@ const LOCK = require('./units-lock');
 const RULES = require('./rules');
 const { parseCsv } = require('./csv');
 
-const ROLES = ['fast', 'ranged', 'armor', 'healer', 'kamikaze', 'mortar'];
+const ROLES = ['fast', 'ranged', 'armor', 'healer', 'kamikaze', 'mortar', 'mine'];   // mine: docs/MINES.md (static, hidden, never in match.units)
 const SHAPES = ['arrow', 'diamond', 'hex', 'disc', 'circle', 'cross', 'tube'];
 const COLUMNS = ['id', 'code', 'name', 'draft_cost', 'live_cost', 'hp', 'damage', 'range', 'speed', 'cooldown_s',
   'radius', 'color', 'glyph', 'description', 'heal', 'heal_range', 'role', 'shape'];
@@ -287,6 +287,7 @@ function idsWithRole(role) { return TYPE_IDS.filter(k => TYPES[k].role === role)
 function roleOf(type) { return TYPES[type] ? TYPES[type].role : ''; }
 function isHealer(type) { return roleOf(type) === 'healer'; }
 function isKamikaze(type) { return roleOf(type) === 'kamikaze'; }
+function isMine(type) { return roleOf(type) === 'mine'; }
 function isFlying(type) { return !!(TYPES[type] && TYPES[type].flying); }
 /** The unit's collision plane (units.csv plane): units only bump into units on the same plane. */
 function planeOf(type) { return TYPES[type] ? TYPES[type].plane : 'ground'; }
@@ -304,7 +305,7 @@ reload();
 if (status.error) logger(`[units] using the built-in table until units.csv loads`);
 
 module.exports = {
-  TYPES, TYPE_IDS, FIELD_COST, CODE_BY_TYPE, TYPE_BY_CODE, ROLES, SHAPES, COLUMNS, OPTIONAL, DEFAULTS, BUILTIN,
+  isMine, TYPES, TYPE_IDS, FIELD_COST, CODE_BY_TYPE, TYPE_BY_CODE, ROLES, SHAPES, COLUMNS, OPTIONAL, DEFAULTS, BUILTIN,
   reload, lockStatus, parseUnits, parseCsv, viewerTable, idsWithRole, roleOf, isHealer, isKamikaze, isFlying, planeOf, healerCode, csvPath, setLogger,
   status: () => ({ path: status.path, source: status.source, loadedAt: status.loadedAt, error: status.error, ids: TYPE_IDS.slice(), lock: { ...lock } }),
 };

@@ -244,6 +244,10 @@ function commanderOrders(view, mem) {
   const theirGround = theirs.filter(u => !isFlying(u.type));
   const armor = U.idsWithRole('armor')[0];
   const tube = view.mortar || null;
+  const mine = U.idsWithRole('mine')[0] || null;   // docs/MINES.md: a pack laid at our front line when they stack up
+  const mineOk = !!mine && !!view.caps && !!view.caps[mine] && !view.caps[mine].block;
+  // Mines (docs/MINES.md): one pack when none of ours is down and Green fields 3+ ground units; the AUTOBUY holds the price back until then.
+  const mineWant = mineOk && (view.caps[mine].room || 0) > 0 && (clumped(theirGround) || theirGround.length >= 3);
   const lines = [];
   const why = [];
   let title = '';
@@ -317,6 +321,9 @@ function commanderOrders(view, mem) {
   } else if (mayBuy && drone && view.droneRoom > 0 && clumped(theirGround) && view.bank >= view.price[drone] + (medicPrice || 0)) {
     buyAnd(drone);
     why.push(launch ? `${codeOf(drone)} on their stack` : `${codeOf(drone)} kept for a fight`);
+  } else if (mayBuy && mineWant && view.bank >= view.price[mine]) {
+    buyAnd(mine);
+    why.push(`${codeOf(mine)} mines their path`);
   } else if (mayBuy && tube && tankN >= 1 && tubeN < Math.min(2, tankN) && view.bank >= view.price[tube] + (medicPrice || 0)) {
     buyAnd(tube);
     why.push(`${codeOf(tube)} behind the tanks`);
@@ -538,6 +545,12 @@ function commanderOrders(view, mem) {
     const want = mayBuy ? bp.autoType : null;
     if (want && view.autobuy !== want && room()) { lines.push(`AUTOBUY ${codeOf(want)}`); if (!bp.buyNow) why.push(bp.why); }
     else if (!want && view.autobuy && room()) lines.push('AUTOBUY OFF');
+  }
+  // Mines: hold their price on the Rifle AUTOBUY while a pack is wanted, drop the hold once laid.
+  if (!smart && view.autobuy && !view.buyCapped && main && !!mem.mineHold !== mineWant && room()) {
+    mem.mineHold = mineWant;
+    const r = mineWant ? view.price[mine] : (HOLD_MEDIC_PRICE && medicPrice ? medicPrice : 0);
+    lines.push(`AUTOBUY ${codeOf(main)}${r ? ` RESERVE ${r}` : ''}`);
   }
   if (!smart && !view.autobuy && !view.buyCapped && room()) {
     const k = main;

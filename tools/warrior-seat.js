@@ -8,7 +8,7 @@
 //   node tools/warrior-seat.js arsenal [guard=3 scout=1 | more <type> | reset]   show / set the pre-match drones
 //   node tools/warrior-seat.js plan [balanced|pressure|armor|counter]   AgRTS style label (next match; this match if it has not stepped)
 //   node tools/warrior-seat.js opening --scout N --rifle N --tank N --medic N [--<id> N] [--queue a,b] [--spend]   AgRTS arsenal and buy queue (ids from units.csv)
-//   node tools/warrior-seat.js fight --propose <plan> [--rifles n --tanks n --medics n --scouts n --drones n --mortars n --hold z3|z4 --push early|normal|late --medic none|one_early|two_by_t60 --note "..."]   arm with your plan proposal; the owner locks it on the card (docs/STRATEGY-CARD.md). `propose <plan> ...` re-proposes while it waits
+//   node tools/warrior-seat.js fight --propose <plan> [--rifles n --tanks n --medics n --scouts n --drones n --mortars n --mines n --hold z3|z4 --push early|normal|late --medic none|one_early|two_by_t60 --note "..."]   arm with your plan proposal; the owner locks it on the card (docs/STRATEGY-CARD.md). `propose <plan> ...` re-proposes while it waits
 //   node tools/warrior-seat.js audit [--match n] [--full] [--json] [--summary]   what you approved vs what ran (plan audit trail, docs/PLAN-AUDIT.md); orders/step take --why <tag>
 //   node tools/warrior-seat.js strategy [--wait [s]] [--json]   the owner's pre-match strategy card as key=value lines (eval-able; strategy_note is single-quoted).
 //     --wait blocks until the owner approves the plan (or nothing is holding the match); opening --from-strategy posts its opening (skipped if the arena already did)
@@ -223,9 +223,9 @@ const pvpReason = v => v.status === 'cancelled' ? `cancelled by ${v.cancelledBy 
 // The proposal flags shared by `fight --propose <plan>` and `propose <plan>`: the plan id plus any dial that differs from the preset.
 function proposalFromArgs(planArg) {
   const plan = planArg || opt('propose');
-  if (!plan || String(plan).startsWith('--')) die('--propose needs a plan: balanced, aggressive or defensive (then any of --rifles n --tanks n --medics n --scouts n --drones n --mortars n --hold z3|z4 --push early|normal|late --medic none|one_early|two_by_t60 --note "...")');
+  if (!plan || String(plan).startsWith('--')) die('--propose needs a plan: balanced, aggressive or defensive (then any of --rifles n --tanks n --medics n --scouts n --drones n --mortars n --mines n --hold z3|z4 --push early|normal|late --medic none|one_early|two_by_t60 --note "...")');
   const p = { plan: String(plan).toLowerCase() };
-  for (const k of ['rifles', 'tanks', 'medics', 'scouts', 'drones', 'mortars']) { const v = opt(k); if (v == null) continue; if (!/^\d+$/.test(String(v))) die(`--${k} must be a whole number, 0 or more`); p[k] = +v; }
+  for (const k of ['rifles', 'tanks', 'medics', 'scouts', 'drones', 'mortars', 'mines']) { const v = opt(k); if (v == null) continue; if (!/^\d+$/.test(String(v))) die(`--${k} must be a whole number, 0 or more`); p[k] = +v; }
   for (const k of ['hold', 'push', 'medic']) { const v = opt(k); if (v != null) p[k] = String(v).toLowerCase(); }
   const n = opt('note'); if (n != null) p.note = String(n);
   return p;
@@ -542,7 +542,7 @@ const read = f => { try { return fs.readFileSync(path.resolve(f), 'utf8'); } cat
       return show({ ok: c.code === 200, started: true, match: st.match });
     }
     case 'propose': {
-      // propose <plan> [--rifles n --tanks n --medics n --scouts n --drones n --mortars n --hold z3|z4 --push early|normal|late --medic none|one_early|two_by_t60 --note "..."]
+      // propose <plan> [--rifles n --tanks n --medics n --scouts n --drones n --mortars n --mines n --hold z3|z4 --push early|normal|late --medic none|one_early|two_by_t60 --note "..."]
       // The agent's plan for the match that is waiting for the owner. The card opens showing it; nothing is locked until the owner presses APPROVE PLAN.
       // A new proposal after a lock clears the lock (the owner approves again). To arm the next match with a proposal, use `fight --propose` instead.
       if (!argv[1] || String(argv[1]).startsWith('--')) die('usage: propose <balanced|aggressive|defensive> [--rifles n ...] [--hold z3|z4] [--push early|normal|late] [--medic none|one_early|two_by_t60] [--note "..."]');

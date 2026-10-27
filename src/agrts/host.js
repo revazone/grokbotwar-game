@@ -175,7 +175,7 @@ function startHost({ root, cfg, cfgPath, port, host }) {
   match.bootId = AUD.boot;   // published in every frame: the watch page keys its message panels on boot + match number
   const aud = (ev, data) => (process.env.PLAN_AUDIT === '0' ? null : AUD.log(match.matchNo, ev, data));
   const arsenalTextH = a => AUDIT.arsenalText(a || {});
-  const audPlan = x => (x ? { plan: x.plan, custom: STRAT.isCustom(x), rifles: x.rifles, tanks: x.tanks, medics: x.medics, scouts: x.scouts, drones: x.drones, mortars: x.mortars, hold: x.hold, push: x.push, medic: x.medic, note: x.note || '' } : null);
+  const audPlan = x => (x ? { plan: x.plan, custom: STRAT.isCustom(x), rifles: x.rifles, tanks: x.tanks, medics: x.medics, scouts: x.scouts, drones: x.drones, mortars: x.mortars, mines: x.mines, hold: x.hold, push: x.push, medic: x.medic, note: x.note || '' } : null);
   const writeProtocol = (dir, matchNo, seat, text) => {
     const rec = protocolLogRecord(dir, matchNo, seat, text);
     try { fs.appendFileSync(PROTOCOL_LOG, rec + '\n'); }
@@ -432,8 +432,8 @@ function startHost({ root, cfg, cfgPath, port, host }) {
     for (const line of String(body.kv).split('\n')) { const m = line.match(/^strategy_([a-z_]+)=(.*)$/); if (m) kv[m[1]] = m[2].replace(/^'|'$/g, '').slice(0, 220); }
     const m = sm(), cur = stratCur(CMDR.OWNER_SIDE), ctx = stratCtx(CMDR.OWNER_SIDE);
     const mismatch = [];
-    if (ctx.approved) for (const [k, want] of [['plan', cur.plan], ['rifles', cur.rifles], ['tanks', cur.tanks], ['medics', cur.medics], ['scouts', cur.scouts], ['drones', cur.drones], ['mortars', cur.mortars], ['hold', cur.hold], ['push', cur.push], ['medic', cur.medic]]) if (kv[k] !== undefined && String(kv[k]) !== String(want)) mismatch.push(k);
-    const rec = aud('strategy_out', { t: Math.round(match.elapsed * 10) / 10, phase: match.phase, waited: body.wait === true, plan: kv.plan, custom: kv.custom, rifles: kv.rifles, tanks: kv.tanks, medics: kv.medics, scouts: kv.scouts, drones: kv.drones, mortars: kv.mortars, hold: kv.hold, push: kv.push, push_t: kv.push_t, medic: kv.medic, assault_t: kv.assault_t, set: kv.set, approved: kv.approved, locked: kv.locked, source: kv.source, plan_hash: kv.hash, opening_applied: kv.opening_applied, opening_overridden: kv.opening_overridden, note_len: (kv.note || '').length, mismatch, arena_hash: STRAT.hash(cur), arena_approved: ctx.approved });
+    if (ctx.approved) for (const [k, want] of [['plan', cur.plan], ['rifles', cur.rifles], ['tanks', cur.tanks], ['medics', cur.medics], ['scouts', cur.scouts], ['drones', cur.drones], ['mortars', cur.mortars], ['mines', cur.mines], ['hold', cur.hold], ['push', cur.push], ['medic', cur.medic]]) if (kv[k] !== undefined && String(kv[k]) !== String(want)) mismatch.push(k);
+    const rec = aud('strategy_out', { t: Math.round(match.elapsed * 10) / 10, phase: match.phase, waited: body.wait === true, plan: kv.plan, custom: kv.custom, rifles: kv.rifles, tanks: kv.tanks, medics: kv.medics, scouts: kv.scouts, drones: kv.drones, mortars: kv.mortars, mines: kv.mines, hold: kv.hold, push: kv.push, push_t: kv.push_t, medic: kv.medic, assault_t: kv.assault_t, set: kv.set, approved: kv.approved, locked: kv.locked, source: kv.source, plan_hash: kv.hash, opening_applied: kv.opening_applied, opening_overridden: kv.opening_overridden, note_len: (kv.note || '').length, mismatch, arena_hash: STRAT.hash(cur), arena_approved: ctx.approved });
     if (mismatch.length) planDev('loop_read', `the loop printed ${kv.plan || '?'} but the locked plan is ${cur.plan}: differs in ${mismatch.join(', ')}`);
     return !!rec;
   };

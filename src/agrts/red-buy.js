@@ -27,7 +27,7 @@ const DEFAULTS = {
   threatAlpha: 0.5,        // share of this window's field in the smoothed read (1 = no memory)
   threatMin: 1.5,          // below this many (hp-weighted) Green units the read is "none": the base mix decides
   // --- mix targets: share of Red's army value by ROLE (units.csv role); split evenly between the types of a role
-  baseMix: Object.freeze({ ranged: 0.55, fast: 0.0, armor: 0.17, healer: 0.12, mortar: 0.10 }),   // kamikaze is not in the army mix: it is bought by its own rules
+  baseMix: Object.freeze({ ranged: 0.55, fast: 0.0, armor: 0.17, healer: 0.12, mortar: 0.10, mine: 0 }),   // kamikaze and mine are not in the army mix: it is bought by its own rules
   mixWeight: 1.0,          // how hard the mix pulls (0 = off)
   mixClamp: Object.freeze([0.45, 1.8]),
   // --- matchup (units.csv derived)
@@ -41,6 +41,7 @@ const DEFAULTS = {
   indirectHit: 0.6,
   minRangeHit: 0.5,        // share of a tube's fire left against a unit whose range is inside its min_range (it closes in and the tube goes quiet)        // share of a Mortar's (indirect) shells that land on a moving target
   droneHit: 0.3,           // share of a Drone pack that connects (the rest dies to fire first)
+  mine: Object.freeze({ baseMult: 0.6, clump: 3, clumpMult: 2 }),   // a mine pack (docs/MINES.md): its own rule, boosted when Green clumps
   dronePack: 3,            // drones per buy (the engine's pack)
   // --- situation rules
   medic: Object.freeze({ perFighters: 4, minFighters: 3, needMult: 4.0, fullMult: 0.0, lowMult: 0.3, hurtBelow: 20, hurtN: 2 }),   // hurtBelow = HP missing that counts as hurt
@@ -113,6 +114,7 @@ const KNOBS = build(DEFAULTS, OVER);
 const roleOf = k => U.roleOf(k);
 const isHealer = k => roleOf(k) === 'healer';
 const isKamikaze = k => roleOf(k) === 'kamikaze';
+const isMine = k => roleOf(k) === 'mine';
 const isFlying = k => U.isFlying(k);
 const clamp = (v, [lo, hi]) => Math.max(lo, Math.min(hi, v));
 const codeOf = k => U.CODE_BY_TYPE[k];
@@ -155,7 +157,7 @@ function dpsVs(a, b, scale = 0.7) {
  */
 function matchup(c, e, o = {}) {
   const K = KNOBS, tc = TYPES[c], te = TYPES[e], targets = o.targets || 1;
-  if (isHealer(c)) return 1;
+  if (isHealer(c) || isMine(c)) return 1;
   if (isKamikaze(c)) {
     if (te.flying) return K.effClamp[0];
     const dmg = tc.dmg * (o.scale || 0.7) * (1 - (te.blastResist || 0));
@@ -270,7 +272,7 @@ function plan(view, st) {
     return true;
   });
   // mix: own share of army value (kamikaze excluded), target share by role split between the role's types
-  const armyTypes = TYPE_IDS.filter(k => !isKamikaze(k) && (roleOf(k) !== 'mortar' || k === tube));
+  const armyTypes = TYPE_IDS.filter(k => !isKamikaze(k) && !isMine(k) && (roleOf(k) !== 'mortar' || k === tube));
   const mix = { ...K.baseMix };
   for (const [r, d] of Object.entries(st.style.mix)) mix[r] = Math.max(0, (mix[r] || 0) + d);
   const perRole = {}; for (const k of armyTypes) perRole[roleOf(k)] = (perRole[roleOf(k)] || 0) + 1;
@@ -323,6 +325,9 @@ function plan(view, st) {
       if (stack) role *= K.drone.engagedMult;
       if (turtle) { role *= K.drone.turtleMult; tag = tag || 'on their turtle'; }
       if (bare) { role *= K.drone.bareMult; tag = tag || 'their hospital is bare'; }
+    } else if (isMine(k)) {
+      role = K.mine.baseMult;
+      if (clumpN >= K.mine.clump) { role *= K.mine.clumpMult; tag = 'mine their path'; }
     } else if (roleOf(k) === 'fast') {
       const bv = TYPES[k].bonusVs || {}, back = theirs.filter(u => bv[codeOf(u.type)]).length;
       if (back) { role *= Math.min(K.runner.backMax, 1 + K.runner.backMult * back); tag = 'dive their backline'; } else role *= K.runner.noBackMult;
@@ -345,7 +350,7 @@ function plan(view, st) {
   const afford = order.filter(k => scores[k] > 0 && bank >= view.price[k]);
   const live = order.filter(k => scores[k] > 0);
   const best = live[0] || null, bestAff = afford[0] || null;
-  const explicit = k => k != null && (isHealer(k) || isKamikaze(k));
+  const explicit = k => k != null && (isHealer(k) || isKamikaze(k) || isMine(k));
   const autoable = live.filter(k => !explicit(k));
   let pick = bestAff, wait = null;
   if (best && best !== bestAff) {
