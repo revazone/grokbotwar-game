@@ -61,7 +61,9 @@
     return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f"|]+/g, ' ').replace(/\s+/g, ' ').trim();
   }
   const isCount = n => typeof n === 'number' && Number.isInteger(n) && n >= 0;
-  const slots = s => COUNT_FIELDS.reduce((n, k) => n + (s[k] | 0), 0);
+  // Mines take no field slot (docs/MINES.md), so they are left out of the n / 6 count.
+  const SLOT_FIELDS = COUNT_FIELDS.filter(k => k !== COUNT_KEY.mine);
+  const slots = s => SLOT_FIELDS.reduce((n, k) => n + (s[k] | 0), 0);
 
   // ---------- the arena's opening limits ----------
   const CARD_CAP = { tank: MAX_TANKS, medic: MAX_MEDICS };           // card rules: 2 Breakers, 2 medics
