@@ -57,6 +57,7 @@ const MINE_ARM_S = 3;
 const MINE_SPOT_SCOUT = 60;
 const MINE_SPOT_AIR = 40;
 const MINE_CLEAR_S = 1.5;
+const MINE_R = 6, MINE_PAD = 4, MINE_STEP = 8, MINE_SLIDE = 40, MINE_GAP = 16; // mine footprint and the clearance it keeps from a structure footprint (placement check)
 // Drones are launch and forget (docs/DRONE.md): on its first step a kamikaze unit picks one enemy
 // (see _droneLaunchPick), locks that unit's id and flies at it until it hits or dies. It never holds,
 // hovers or waits, and later MOVE / FOCUS orders do not retarget it; only the target's death does.
@@ -1682,16 +1683,92 @@ class AgrtsMatch extends EventEmitter {
     return z;
   }
 
-  /** Lay one mine of type k from the reserve. False at the field cap (max_alive); it stays in reserve. */
+  /**
+   * Where the next pack of 3 goes in `zone`: lanes 0.25 / 0.5 / 0.75, jittered by a hash of (seed, match, side, zone, pack), never the
+   * match rng, so a buy check and the lay that follows see the same 3 points (docs/MINES.md, Placement).
+   */
+  _minePackPoints(side, zone, pack) {
+    const h = C.mulberry32((this.baseSeed ^ Math.imul(this.matchNo + 1, 0x9e3779b1) ^ Math.imul(side + 1, 0x85ebca6b) ^ Math.imul(zone + 1, 0xc2b2ae35) ^ Math.imul(pack + 1, 0x27d4eb2f)) >>> 0);
+    const zw = W / 8;
+    return [0.25, 0.5, 0.75].map(lane => ({ x: this._fieldX(zone * zw + zw * (0.35 + h() * 0.3)), y: this._fieldY(H * lane + (h() - 0.5) * 40) }));
+  }
+
+  /**
+   * The one ground-placement check (docs/MINES.md, docs/ADD-UNIT.md): why (x, y) cannot take a mine, or '' when it can.
+   * 'wall' = a terrain wall, 'structure' = a standing base, turret, hospital, gun tower, depot, built post or bought tower (either side),
+   * 'planned' = a spot a structure will stand on: a down hospital / depot / gun awaiting rebuild, a bought tower still building,
+   * a forward post not yet built. Footprint = hull radius + MINE_R + MINE_PAD. Callers move a blocked mine with _minePackPlace (other lanes, then slides).
+   */
+  mineBlockedAt(x, y) {
+    const r = MINE_R;
+    if (this._wallOverlap(x, y, r)) return 'wall';
+    const near = (sx, sy, R) => Math.hypot(x - sx, y - sy) <= R + r + MINE_PAD;
+    let planned = false;
+    const look = (st, R, built) => { if (!st || !near(st.x, st.y, R)) return false; if (built) return true; planned = true; return false; };
+    for (let s = 0; s < 2; s++) {
+      const bx = s === 0 ? 13 : W - 13;   // the base: an 18 x 66 block (24 wide with its cross bar), drawn at x 13 / W-13, mid-height
+      if (Math.abs(x - bx) <= 12 + r + MINE_PAD && Math.abs(y - H / 2) <= 33 + r + MINE_PAD) return 'structure';
+      const t = this.turrets && this.turrets[s];
+      if (t && t.alive && near(t.x, t.y, C.TURRET.r)) return 'structure';
+      if (this.hospitals && this.hospitals[s] && look(this.hospitals[s], HH.R, this.hospitals[s].alive)) return 'structure';
+      if (this.guns && this.guns[s] && look(this.guns[s], TW.GUN_R, this.guns[s].alive)) return 'structure';
+      if (this.depots && this.depots[s] && look(this.depots[s], TW.DEPOT_R, this.depots[s].alive)) return 'structure';
+      for (const g of (this.extraGuns && this.extraGuns[s]) || []) if (g.alive && look(g, TW.GUN_R, !(g.building > 0))) return 'structure';
+    }
+    for (const p of this.posts || []) {
+      if (p.alive) { if (near(p.x, p.y, POST_R)) return 'structure'; continue; }
+      const sp = this._postSpot(p.side, p.fz, p.slot);
+      if (near(sp.x, sp.y, POST_R)) planned = true;
+    }
+    return planned ? 'planned' : '';
+  }
+
+  /**
+   * Where each of the pack's 3 mines actually goes (docs/MINES.md, Placement). For mine i, aimed at (x_i, lane y_i): try x_i in its own
+   * lane, then the pack's other lanes at the same x; then slide x by MINE_STEP px forward (toward the enemy), then backward, alternating,
+   * nearest first, up to MINE_SLIDE px, trying every lane at each x. A candidate must be clear (mineBlockedAt), inside the zone and the field,
+   * and at least MINE_GAP px from the pack's mines already placed. First hit wins. Deterministic: no rng, so check and lay agree.
+   * Returns { pts: [{x, y, ax, ay, moved}], why }: why = '' when all 3 have a spot, else `blocked by <reason>` (aimed spot's reason).
+   */
+  _minePackPlace(side, zone, pack) {
+    const aim = this._minePackPoints(side, zone, pack), zw = W / 8, fwd = side === 0 ? 1 : -1;
+    const x0 = Math.max(zone * zw, 0) + MINE_R, x1 = Math.min((zone + 1) * zw, W) - MINE_R;
+    const dxs = [0]; for (let d = MINE_STEP; d <= MINE_SLIDE; d += MINE_STEP) dxs.push(d * fwd, -d * fwd);
+    const pts = [];
+    for (let i = 0; i < 3; i++) {
+      const a = aim[i], lanes = [i, ...[0, 1, 2].filter(j => j !== i).sort((j, k) => Math.abs(j - i) - Math.abs(k - i) || j - k)];
+      let got = null;
+      for (const dx of dxs) {
+        const x = a.x + dx; if (x < x0 || x > x1) continue;
+        for (const j of lanes) {
+          const y = aim[j].y;
+          if (pts.some(p => Math.hypot(p.x - x, p.y - y) < MINE_GAP) || this.mineBlockedAt(x, y)) continue;
+          got = { x, y, ax: a.x, ay: a.y, moved: dx !== 0 || j !== i, dx, lane: j }; break;
+        }
+        if (got) break;
+      }
+      if (!got) { const why = this.mineBlockedAt(a.x, a.y) || 'structure'; return { pts, why: `blocked by ${why === 'planned' ? 'planned spot' : why}` }; }
+      pts.push(got);
+    }
+    return { pts, why: '' };
+  }
+
+  /** The 3-mine pack in `zone` as a whole: '' when every mine has a clear spot (moved if needed), else `blocked by <reason>`. */
+  _minePackBlocked(side, zone) {
+    return this._minePackPlace(side, zone, Math.floor(this.mineStats[side].laid / 3)).why;
+  }
+
+  /** Lay one mine of type k from the reserve. False at the field cap (max_alive), or when its pack's spread is blocked; it stays in reserve. */
   _layMine(side, k) {
     const t = TYPES[k];
     if (t.maxAlive > 0 && this.mines[side].length >= t.maxAlive) return false;
+    const zone = this._mineZoneOf(side), laid = this.mineStats[side].laid;
+    const plan = this._minePackPlace(side, zone, Math.floor(laid / 3));   // the pack as a whole: any mine with no clear spot refuses it
+    if (plan.why && laid % 3 === 0) return false;
+    const p = plan.pts[laid % 3];
+    if (!p || this.mineBlockedAt(p.x, p.y)) return false;
     this.reserve[side][k]--;
-    const zone = this._mineZoneOf(side), zw = W / 8;
-    const n = this.mines[side].length;
-    const lane = [0.25, 0.5, 0.75][(this.mineStats[side].laid + n) % 3];
-    const x = this._fieldX(zone * zw + zw * (0.35 + this.rng() * 0.3));
-    const y = this._fieldY(H * lane + (this.rng() - 0.5) * 40);
+    const { x, y } = p;
     this.mines[side].push({ id: this.nextId++, side, type: k, x, y, zone, arm: MINE_ARM_S, spotted: false, clear: 0 });
     this.mineStats[side].laid++;
     this.combatFx.push({ x, y, t: 0, life: 0.5, kind: 'mine-lay', side, col: t.color, r: 8 });
@@ -4872,6 +4949,8 @@ class AgrtsMatch extends EventEmitter {
       const left = last == null ? 0 : t.buyCooldown - (this.elapsed - last);
       if (left > 1e-6) return `${code} cooldown ${left.toFixed(1)}s`;
     }
+    // Ground placement (docs/MINES.md): a live mine buy whose 3-mine spread hits a structure, planned spot or wall is refused, nothing charged.
+    if (U.isMine(type) && this.phase === 'live' && this.mines) { const why = this._minePackBlocked(side, this._mineZoneOf(side)); if (why) return `z${this._mineZoneOf(side) + 1}: ${why}`; }
     return '';
   }
 
@@ -4897,6 +4976,8 @@ class AgrtsMatch extends EventEmitter {
     if (!k) return this._refuse(side, parsed, 'unknown unit MINE');
     const z = parsed.zone;
     if (!(side === 0 ? this.land[z] > 0.12 : this.land[z] < -0.12)) return this._refuse(side, parsed, `z${z + 1} not held`);
+    const why = this._minePackBlocked(side, z);   // the whole spread is checked: one blocked mine refuses the order, nothing charged
+    if (why) return this._refuse(side, parsed, why);
     this.mineZone[side] = z;
     return this._liveBuy(side, { ...parsed, op: 'BUY', type: k }, scratch);
   }
