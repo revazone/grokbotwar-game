@@ -52,6 +52,8 @@ function digest(M, K = L.load()) {
     if (!/ (END|READY) /.test(r.l) && PLAY.idleEligible(r.l, K.spendGuardCR, px) && !buyT.has(r.t)) idle++; }
   // loop-down: a gap of > LOOP_GAP match-seconds between reports we received means the Play Loop stopped polling (the arena autopilot played Green)
   const gaps = []; for (let i = 1; i < M.reports.length; i++) { const a = M.reports[i - 1].t, b = M.reports[i].t; if (b - a > LOOP_GAP) gaps.push({ from: a, to: b }); }
+  // Starting roster: medics on the field in the first report, before any buy landed. Kept apart from buys so a roster medic is never 'no medic'.
+  const r0 = M.reports[0] ? M.reports[0].l : ''; const rosterM = M.buys.some(b => b.u === 'M' && b.t <= (M.reports[0] || {}).t) ? 0 : (((r0.match(/\| f ([^|]*)/) || [])[1] || '').match(/\bM\d+@/g) || []).length;
   const medT = (M.reports.find(r => /\| f [^|]*\bM\d+@/.test(r.l)) || {}).t;
   const zs = M.reports.map(r => r.l.match(/\| z (\d+)\/(\d+)/)).filter(Boolean); const zMax = zs.length ? Math.max(...zs.map(z => +z[1])) : 0;
   const ahead = M.reports.filter(r => /\| ahead/.test(r.l)).length;
@@ -76,14 +78,15 @@ function digest(M, K = L.load()) {
   for (const t of tags) t.cost = COST[t.id] || 0;
   const top = Math.max(0, ...tags.map(t => t.cost)); const severeTags = severe && top > 0 ? tags.filter(t => t.cost === top).map(t => t.id) : [];
   const id = require('crypto').createHash('sha1').update(end + '|' + M.reports.length + '|' + M.buys.length).digest('hex').slice(0, 10);
-  return { id, win, hp, tEnd, cause, severe, severeTags, buys, units, lost, elost, endBank: banks.length ? banks[banks.length - 1].b : 0, maxBank: Math.max(0, ...banks.map(x => x.b)), idle, gaps, medT, zMax, zEnd: zs.length ? `${zs[zs.length - 1][1]}/${zs[zs.length - 1][2]}` : '-', tags };
+  return { id, win, hp, tEnd, cause, severe, severeTags, buys, units, lost, elost, endBank: banks.length ? banks[banks.length - 1].b : 0, maxBank: Math.max(0, ...banks.map(x => x.b)), idle, gaps, medT, rosterM, zMax, zEnd: zs.length ? `${zs[zs.length - 1][1]}/${zs[zs.length - 1][2]}` : '-', tags };
 }
 const PACK = { S: 'scout trio', D: 'drone pack', L: 'mine pack' };
 const fmtMix = (o, pack) => Object.entries(o).map(([k, v]) => `${v} ${(pack && PACK[k]) || UNIT[k] || k}${v === 1 ? '' : 's'}`).join(', ') || 'none';
 function printSummary(D, H, K) {
   const out = [];
   out.push(`MATCH ${D.win ? 'WON' : 'LOST'} | end: ${D.cause} | base hp ${D.hp} | zones end ${D.zEnd}, max held ${D.zMax}`);
-  out.push(`buys (orders): ${fmtMix(D.buys, 1)}  = units ${fmtMix(D.units)}`);
+  out.push(`started with ${D.rosterM || 0} medic${D.rosterM === 1 ? '' : 's'} (starting roster) | medics bought: ${D.buys.M || 0}`);
+  out.push(`buys (orders, roster not included): ${fmtMix(D.buys, 1)}  = units ${fmtMix(D.units)}`);
   out.push(LEGEND);
   out.push(`lost: ${fmtMix(D.lost)} | killed: ${fmtMix(D.elost)}`);
   out.push(`credits: end ${D.endBank}, max ${D.maxBank}, idle reports ${D.idle} | first medic ${D.medT === undefined ? 'never' : 'T' + D.medT}`);

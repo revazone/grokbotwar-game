@@ -286,15 +286,24 @@ class Play {
     // Mine rule (lesson mineByT, cap capMinePacks): once per match, after the opening medic is out, when we hold our hold zone and the
     // bank covers a pack with nothing else bought this report: MINE z<hold> buys a pack and lays it in that zone (owned, behind the fight),
     // not at the contested front where Ember's scouts/drones clear it at once (match 7: BUY L at T24 went to contested z5 and was gone unseen).
-    { const md = S.K.mineByT, bkM = V.bank === '' ? 0 : +V.bank, pxL = S.px.L || 36, zG = +((l.match(/\| z (\d+)\//) || [])[1] || 0);
+    // Hold-zone check: the report has no per-zone owner, only Green's zone count ('z G/E'). Green's land grows contiguously from its base,
+    // so the proxy is: count >= hold, not 'behind', no fight at or behind the hold zone, and no Ember unit at or behind it (E f T@z4).
+    // Match 8 fired MINE z4 on the count alone (and from the commander WANT path), 4x 'ERR z4 not held'.
+    const zG = +((l.match(/\| z (\d+)\//) || [])[1] || 0), hz = S.S_hz;
+    const efTxt = (l.match(/\| E \d+ f ([^|]*)/) || [])[1] || '', fightTxt = (l.match(/\| fight ([^|]*)/) || [])[1] || '';
+    const zIn = (txt, re) => [...txt.matchAll(re)].some(m => +m[1] <= hz);
+    const holdOk = zG >= hz && !V.behind && !zIn(efTxt, /@z(\d+)/g) && !zIn(fightTxt, /\bz(\d+) \(/g);
+    S.mineTry = S.mineTry || 0;
+    const mineReady = holdOk && !S.mineDone && S.mineTry < 2 && t - (S.mineErrT ?? -999) >= 30;
+    { const md = S.K.mineByT, bkM = V.bank === '' ? 0 : +V.bank, pxL = S.px.L || 36;
       const medOk = /\bM\d+@/.test(V.f) || /\d+M\b/.test(V.resAll) || !!S.mdone;
-      if (md > 0 && S.caps.L >= 3 && !S.mineDone && !bt && !mw0 && !S._saving && t >= md && zG >= S.S_hz && medOk && act >= 4 && bkM >= pxL
+      if (md > 0 && S.caps.L >= 3 && !S.mineDone && !bt && !mw0 && !S._saving && t >= md && mineReady && medOk && act >= 4 && bkM >= pxL
           && V.buy.some(b => b.u === 'L') && !ord.some(x => /^(BUY|MINE) /.test(x))) { ord.unshift(`MINE z${S.S_hz}`); S.log(`  MINE T${t}: b${bkM} -> MINE z${S.S_hz} (hold zone)`); } }
     // Commander named a unit in chat (cmdrMap): buy it as soon as it is affordable with room for it, else bank (no other buys). Expires after 60 s.
     if (S.wantU) { const wu = S.wantU, wb = V.buy.find(x => x.u === wu), wp = wb ? wb.price : S.px[wu], bkW = V.bank === '' ? 0 : +V.bank; if (S.wantT == null) S.wantT = t;   // the buy list only names affordable units, so an unaffordable one is priced from px
       if (!wp || t - S.wantT > 60) { S.log(`  WANT ${wu} dropped T${t}: ${wp ? 'expired' : 'no price'}`); S.wantU = null; }
       else if (!bt) {
-        if (wb && wp <= bkW && 6 - act >= slotsOf(wu)) { ord = ord.filter(x => !/^(BUY|DEPLOY|MINE) /.test(x)); if (wu === 'L') ord.unshift(`MINE z${S.S_hz}`); else ord.unshift(`BUY ${wu}`, 'DEPLOY ALL'); if (wu === 'D') S.lastD = t; S.log(`  WANT T${t}: BUY ${wu}`); }
+        if (wb && wp <= bkW && 6 - act >= slotsOf(wu)) { ord = ord.filter(x => !/^(BUY|DEPLOY|MINE) /.test(x)); if (wu === 'L') { if (mineReady) ord.unshift(`MINE z${S.S_hz}`); else S.log(`  WANT T${t}: MINE waits, z${S.S_hz} not held`); } else ord.unshift(`BUY ${wu}`, 'DEPLOY ALL'); if (wu === 'D') S.lastD = t; S.log(`  WANT T${t}: BUY ${wu}`); }
         else { ord = ord.filter(x => !/^BUY /.test(x)); S._saving = 1; } } }
     // Autobuy defers to the buy list: turn it off once, drop the loop's own AUTOBUY R/T toggles (commander RESERVE orders stay).
     { const abNow = g1(l, /\bauto ([A-Z]+)/); ord = ord.filter(x => !/^AUTOBUY (R|T|O|M|S|D)$/.test(x));
@@ -318,6 +327,8 @@ class Play {
   onResults(results) {
     const S = this;
     if (results.some(r => /^OK (BUY L$|MINE )/.test(r))) { S.mineDone = 1; S.log(`  MINE pack bought T${S._t}`); }
+    if (results.some(r => /^(OK|ERR) MINE /.test(r))) S.mineTry = (S.mineTry || 0) + 1;
+    if (results.some(r => /^ERR MINE /.test(r))) { S.mineErrT = S._t || 0; S.log(`  MINE refused T${S._t}, try ${S.mineTry}/2${S.mineTry >= 2 ? ', done this match' : ', retry >= 30 s'}`); if (S.mineTry >= 2 && S.wantU === 'L') S.wantU = null; }
     if (S.wantU && results.some(r => r === `OK BUY ${S.wantU}` || (S.wantU === 'L' && /^OK MINE /.test(r)))) { S.log(`  WANT ${S.wantU} bought T${S._t}`); S.wantU = null; }
     if (results.some(r => /^OK BUY M/.test(r))) { let mw = (S.medicWant ?? 1) - 1; S.mbank = 0; S.log(`  MEDIC bought T${S._t}, ${mw} left`); if (mw <= 0) { S.medicWant = null; S.mdone = 1; } else S.medicWant = mw; }
     if (results.some(r => /^OK BANK/.test(r))) S.mbank = 1;
